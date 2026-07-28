@@ -1,0 +1,3 @@
+dolphin-memory-engine>=1.2.0
+cytolk>=0.1.8
+numpy>=1.24

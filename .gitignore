@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.scanstate.pkl
+candidates.txt
+tools/sweep_out/
