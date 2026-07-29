@@ -10,9 +10,30 @@ emulator is just a window onto live game state.
 
 ## Status
 
-Working today: the companion speaks the **game-select cursor** — move between entries
-and it announces "Screwbot Factory", "See-Saw", "Double Date" and so on, read from the
-game's own text archive rather than from a hardcoded list.
+Working today:
+
+- **Game-select cursor** — move between entries and it announces "Screwbot Factory",
+  "See-Saw", "Double Date" and so on, read from the game's own text archive rather than
+  from a hardcoded list.
+- **Game info card** — select a game and it reads the card: *"Tambourine. Ready to play
+  a little Simian Says on the tambourine?"*
+
+### Reading on-screen text in general
+
+The game draws its UI with Nintendo's NW4R layout system, and this turned out to be the
+key to everything. Each text box is a runtime object carrying its own ASCII pane name —
+`T_game_title_00`, `T_exposition_00` — with a pointer to its live UTF-16BE string at
+name + `0x1C`. So text can be fetched *by name* instead of by hunting for one buffer at
+a time, and it should extend to dialogue, results and other screens.
+
+`rhfaccess/games/panes.py` implements this: scan MEM2 for the name once, cache it,
+re-validate cheaply per read. `PaneIndex.scan()` with no arguments dumps every live
+text pane, which is the fastest way to find what a new screen exposes.
+
+One catch: **a pane keeps its last string after its screen goes away.** Nothing in the
+pane says whether it is visible, so every use must be gated on game state. The info
+card is gated on `0x8032A5C0` (1 = grid, 3 = card open); without that it would announce
+a stale description each time the grid redrew.
 
 ### Verified
 
@@ -21,6 +42,8 @@ game's own text archive rather than from a hardcoded list.
 | Game-select cursor index | `0x80320404` (u8, mirrored at `+1`) | Automated return-to-origin scan; walks ±1 per press, `0xFF` when invalid |
 | Selected entry object | `0x80320430` → MEM2, 0x50-byte stride | Pointer moves exactly one stride per press |
 | Text archive (`DAT1`) | located at runtime | 292 records; index 1 = "Title Screen", 104 = "Hole in One" |
+| Menu state | `0x8032A5C0` (u32) | 1 = grid, 3 = info card; found by driving Z/X through the scanner |
+| Layout text panes | located by name at runtime | pointer at name + `0x1C`; verified against the on-screen card |
 | MEM2 access | `rhfaccess/rawmem.py` | dolphin-memory-engine cannot read MEM2 on current Dolphin builds |
 
 ### Menu layout

@@ -40,6 +40,7 @@ cp1252 console encoding.
 | `rhfaccess/probes.py` | Confidence-gating engine: stability, dedupe, forgetting |
 | `rhfaccess/speech.py` | Tolk/NVDA output, interrupt policy |
 | `rhfaccess/games/archive.py` | Runtime locator for the game's DAT1 text archives |
+| `rhfaccess/games/panes.py` | Reads on-screen text by NW4R layout pane name |
 | `rhfaccess/games/rhf.py` | All RHF specifics: addresses, menu layout, probes |
 | `tools/scan.py` | Memory scanner core (numpy-vectorised, read-only) |
 | `tools/step.py` | One scan operation per invocation, state on disk |
@@ -70,6 +71,22 @@ Addresses in MEM1 (`0x80…`) have held across sessions. **Everything in MEM2
 - `0x80320404` — game-select cursor index, u8, mirrored at `+1`. `0xFF` means
   no valid selection.
 - `0x80320430` — pointer to the selected entry, array of `0x50`-byte structs.
+- `0x8032A5C0` — menu state, u32. 1 = grid, 3 = game info card open.
+
+## Reading on-screen text (start here for any new screen)
+
+The UI is NW4R layouts. Every text box is an object holding its own ASCII pane
+name (`T_game_title_00`, `T_exposition_00`) with a pointer to its live UTF-16BE
+string at name + `0x1C`. Ask for text **by pane name** — do not go hunting for
+individual buffers, which is slow and yields addresses that move.
+
+`panes.PaneIndex.scan()` with no arguments returns every live text pane. That is
+the first thing to run when adding support for a new screen: it shows what the
+screen exposes and what the names are.
+
+**A pane keeps its last string after its screen closes**, and nothing in the pane
+indicates visibility. Always gate on game state (e.g. `0x8032A5C0` for the info
+card) or you will announce stale text.
 
 Menu layout (see README for the full table): the cursor walks one array. idx 0–2
 are the extras, 3–4 locked, then each block of five is a row of four games plus

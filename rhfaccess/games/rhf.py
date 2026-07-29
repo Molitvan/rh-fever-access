@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Callable, Dict, Hashable, Iterable, List, Optional
 
 from ..probes import Probe, Utterance
-from . import archive
+from . import archive, panes
 
 # Disc IDs, to be confirmed against whatever `game_id()` actually reports.
 GAME_IDS: Dict[str, str] = {
@@ -160,6 +160,17 @@ ADDR_GRID_INDEX = 0x80320404
 ADDR_GRID_ENTRY_PTR = 0x80320430
 ENTRY_STRIDE = 0x50
 
+# Which part of the game-select screen is up. Found by driving Z/X (select and
+# back) through the automated scanner: it returns to 1 every time the card
+# closes and reads 3 for as long as it is open.
+ADDR_MENU_STATE = 0x8032A5C0
+MENU_STATE_GRID = 1
+MENU_STATE_CARD = 3
+
+# Text panes on the info card that appears when a game is selected.
+PANE_CARD_TITLE = "T_game_title_00"
+PANE_CARD_TEXT = "T_exposition_00"
+
 INVALID_INDEX = 0xFF
 MAX_NAME_LENGTH = 32
 
@@ -252,6 +263,8 @@ class GridCursorProbe(Probe):
         return self._archive
 
     def read(self, link) -> Optional[Hashable]:
+        if link.u32(ADDR_MENU_STATE) != MENU_STATE_GRID:
+            return None
         index = link.u8(ADDR_GRID_INDEX)
         if index is None or index == INVALID_INDEX:
             return None
@@ -282,7 +295,44 @@ class GridCursorProbe(Probe):
         return [Utterance(label, interrupt=True, priority=5)]
 
 
+class InfoCardProbe(Probe):
+    """Speaks the card shown after picking a game: its title and description.
+
+    The panes keep their last string after the card closes, so this is gated on
+    the menu state rather than on the text itself — otherwise it would announce
+    a stale description every time the grid redrew.
+    """
+
+    name = "info_card"
+    interval = 0.1
+    stable_ticks = 2
+
+    def __init__(self) -> None:
+        self._panes = None
+
+    def reset(self) -> None:
+        self._panes = None
+
+    def read(self, link) -> Optional[Hashable]:
+        if link.u32(ADDR_MENU_STATE) != MENU_STATE_CARD:
+            return None
+        if self._panes is None:
+            self._panes = panes.PaneIndex(link)
+        wanted = (PANE_CARD_TITLE, PANE_CARD_TEXT)
+        if not self._panes.ensure(wanted):
+            return None
+        title = self._panes.text(PANE_CARD_TITLE)
+        description = self._panes.text(PANE_CARD_TEXT)
+        if not title or not description:
+            return None
+        return (title, description)
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        title, description = current
+        return [Utterance(f"{title}. {description}", interrupt=True, priority=8)]
+
+
 def build_probes() -> List[Probe]:
-    probes: List[Probe] = [GameIdentityProbe(), GridCursorProbe()]
+    probes: List[Probe] = [GameIdentityProbe(), GridCursorProbe(), InfoCardProbe()]
     probes.extend(WatchProbe(w) for w in WATCHES)
     return probes
