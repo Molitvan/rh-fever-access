@@ -48,32 +48,35 @@ class DolphinLink:
 
     @property
     def connected(self) -> bool:
-        return dme.is_hooked()
+        """True if either backend can reach the game."""
+        return self._raw.available or dme.is_hooked()
 
     def ensure_connected(self) -> bool:
-        """Hook Dolphin if needed. Rate-limited so the poll loop stays cheap."""
-        if dme.is_hooked():
-            # The hook can go stale without an error; a probe read confirms it.
-            if self.u32(ADDR_GAME_ID) is not None:
-                return True
-            dme.un_hook()
+        """Attach to a Dolphin that has a game loaded. Rate-limited.
+
+        Being "connected" means a valid disc ID can actually be read, not that
+        some hook reports success — an idle second Dolphin will happily accept a
+        hook and then read nothing.
+        """
+        if self.game_id() is not None:
+            return True
 
         now = time.monotonic()
         if now < self._next_retry:
             return False
         self._next_retry = now + self._retry_seconds
 
+        # Drop both backends and re-acquire: Dolphin may have restarted, or the
+        # game may have been stopped and rebooted, moving everything.
+        if dme.is_hooked():
+            dme.un_hook()
+        self._raw.close()
+        self._raw_tried = False
         try:
             dme.hook()
         except Exception:
-            return False
-        if dme.is_hooked():
-            # A fresh hook means a possibly-restarted Dolphin: the old MEM2
-            # base is meaningless now.
-            self._raw.close()
-            self._raw_tried = False
-            return True
-        return False
+            pass
+        return self.game_id() is not None
 
     def disconnect(self) -> None:
         if dme.is_hooked():
@@ -95,8 +98,17 @@ class DolphinLink:
         if size <= 0 or not in_ram(addr) or not in_ram(addr + size - 1):
             return None
 
+        # The raw backend picks the Dolphin instance that actually has a game
+        # loaded, so it is preferred once attached. dolphin-memory-engine hooks
+        # whichever process it finds first, which is the wrong one whenever a
+        # second, idle Dolphin is open.
+        if self._ensure_raw():
+            data = self._raw.read(addr, size)
+            if data is not None:
+                return data
+
         if addr >= MEM2_START:
-            return self._read_mem2(addr, size)
+            return None  # dme cannot read MEM2 at all
 
         try:
             data = dme.read_bytes(addr, size)
@@ -106,15 +118,13 @@ class DolphinLink:
             return None
         return data
 
-    def _read_mem2(self, addr: int, size: int) -> Optional[bytes]:
-        if not self._raw.available:
-            if self._raw_tried:
-                return None
-            self._raw_tried = True
-            game_id = self.read(ADDR_GAME_ID, 6)
-            if not self._raw.attach(game_id):
-                return None
-        return self._raw.read(addr, size)
+    def _ensure_raw(self) -> bool:
+        if self._raw.available:
+            return True
+        if self._raw_tried:
+            return False
+        self._raw_tried = True
+        return self._raw.attach()
 
     # -- typed reads (PowerPC is big-endian) -----------------------------
 

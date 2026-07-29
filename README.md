@@ -17,6 +17,8 @@ Working today:
   from a hardcoded list.
 - **Game info card** — select a game and it reads the card: *"Tambourine. Ready to play
   a little Simian Says on the tambourine?"*
+- **Save file select** — *"File 1. Flow 89. 16 medals."* / *"File 2. New game."*
+- **Title screen** — an authored prompt (see below), because the screen has no text.
 
 ### Reading on-screen text in general
 
@@ -42,7 +44,8 @@ a stale description each time the grid redrew.
 | Game-select cursor index | `0x80320404` (u8, mirrored at `+1`) | Automated return-to-origin scan; walks ±1 per press, `0xFF` when invalid |
 | Selected entry object | `0x80320430` → MEM2, 0x50-byte stride | Pointer moves exactly one stride per press |
 | Text archive (`DAT1`) | located at runtime | 292 records; index 1 = "Title Screen", 104 = "Hole in One" |
-| Menu state | `0x8032A5C0` (u32) | 1 = grid, 3 = info card; found by driving Z/X through the scanner |
+| Menu state | `0x8032A5C0` (u32) | 1 = grid, 3 = info card; found by driving Z/X through the scanner. **Not a global screen ID** — the file select also reads 3 |
+| File slot index | `0x90DEBB71` (u8) | 0-3 over the 2x2 slot grid; survived a full game reboot at the same address |
 | Layout text panes | located by name at runtime | pointer at name + `0x1C`; verified against the on-screen card |
 | MEM2 access | `rhfaccess/rawmem.py` | dolphin-memory-engine cannot read MEM2 on current Dolphin builds |
 
@@ -78,6 +81,27 @@ Corroboration before speaking: the selected-entry pointer must satisfy
 `pointer == base + index * 0x50` with a base that holds still. When the cursor
 leaves the grid the pointer jumps to a different array and that breaks, which
 is when the companion goes quiet instead of repeating a stale name.
+
+### The title screen has no text
+
+A pane sweep on the title screen returns **zero** text panes — the "press A and B"
+prompt is a picture of a Wii Remote, not a string. So `TITLE_ANNOUNCEMENT` in `rhf.py`
+is authored rather than read from the game, the same compromise as the extras labels.
+It is justified here because staying silent leaves a blind player with no way to know
+what to press.
+
+Its detector is the weakest thing in the project: "a full pane sweep found nothing".
+That is distinctive today (every other screen exposes 20+ panes) but the boot logos
+presumably also have none, so it may announce early. The probe switches itself off for
+good as soon as any other screen appears, so the sweep only runs for a few seconds.
+
+### Heap addresses are reproducible
+
+Worth knowing before doing more RE: RHF's allocator is deterministic. The text archive,
+the description buffer, the file-select panes and the slot index all reappeared at
+*identical* addresses across a full game reboot. MEM2 addresses can therefore be used
+directly, with validation — though locating by pane name or archive magic is still
+preferred where possible.
 
 ### Provisional — do not trust yet
 

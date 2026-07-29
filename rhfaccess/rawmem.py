@@ -67,20 +67,26 @@ class PROCESSENTRY32W(ctypes.Structure):
     ]
 
 
-def find_process(name: str = "Dolphin.exe") -> Optional[int]:
+def find_processes(name: str = "Dolphin.exe") -> List[int]:
+    """Every Dolphin process, not just the first.
+
+    More than one can be open at a time, and typically only one has a game
+    running. Picking blindly gets you the empty one.
+    """
+    out: List[int] = []
     snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     if snap == -1:
-        return None
+        return out
     try:
         entry = PROCESSENTRY32W()
         entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
         if not k32.Process32FirstW(snap, ctypes.byref(entry)):
-            return None
+            return out
         while True:
             if entry.szExeFile.lower() == name.lower():
-                return int(entry.th32ProcessID)
+                out.append(int(entry.th32ProcessID))
             if not k32.Process32NextW(snap, ctypes.byref(entry)):
-                return None
+                return out
     finally:
         k32.CloseHandle(snap)
 
@@ -93,14 +99,20 @@ class RawMemory:
         self._handle = None
         self.mem1_base: Optional[int] = None
         self.mem2_base: Optional[int] = None
+        self.game_id: Optional[bytes] = None
 
     # -- setup -----------------------------------------------------------
 
     def attach(self, game_id: Optional[bytes] = None) -> bool:
+        """Attach to whichever Dolphin actually has a game running."""
         self.close()
-        pid = find_process()
-        if pid is None:
-            return False
+        for pid in find_processes():
+            if self._attach_pid(pid, game_id):
+                return True
+            self.close()
+        return False
+
+    def _attach_pid(self, pid: int, game_id: Optional[bytes]) -> bool:
         handle = k32.OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
                                  False, pid)
         if not handle:
@@ -114,6 +126,9 @@ class RawMemory:
             if mtype != MEM_MAPPED or size not in MEM1_SIZES:
                 continue
             head = self._read_raw(base, 6)
+            # A running game puts its disc ID at the start of MEM1. An idle
+            # Dolphin has no such region, which is what tells the instances
+            # apart.
             if not head or not head.isalnum():
                 continue
             if game_id is not None and head != game_id:
@@ -122,16 +137,15 @@ class RawMemory:
                 candidate = base + offset
                 if sizes.get(candidate) in MEM2_SIZES:
                     self.mem1_base, self.mem2_base = base, candidate
+                    self.game_id = head
                     return True
-
-        self.close()
         return False
 
     def close(self) -> None:
         if self._handle:
             k32.CloseHandle(self._handle)
         self._handle = None
-        self.pid = self.mem1_base = self.mem2_base = None
+        self.pid = self.mem1_base = self.mem2_base = self.game_id = None
 
     @property
     def available(self) -> bool:

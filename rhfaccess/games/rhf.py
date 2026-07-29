@@ -14,6 +14,8 @@ first.
 
 from __future__ import annotations
 
+import time
+
 from typing import Callable, Dict, Hashable, Iterable, List, Optional
 
 from ..probes import Probe, Utterance
@@ -170,6 +172,19 @@ MENU_STATE_CARD = 3
 # Text panes on the info card that appears when a game is selected.
 PANE_CARD_TITLE = "T_game_title_00"
 PANE_CARD_TEXT = "T_exposition_00"
+
+# --- save file select (the first screen after the title) ----------------
+#
+# Four slots in a 2x2 grid; the index walks 0,1 across the top and 2,3 along
+# the bottom. This is a MEM2 heap address, but the game's allocator is
+# deterministic: it landed here again, byte for byte, after a full reboot.
+# Validated as 0-3 on every read regardless.
+ADDR_FILE_SLOT = 0x90DEBB71
+FILE_SLOT_COUNT = 4
+
+PANE_FILE_PROMPT = "T_no_data_00"     # "Select one!"
+PANE_FILE_FLOW = "T_nori_num_0{}"     # "nori" = groove; the Flow number
+PANE_FILE_MEDALS = "T_medal_num_0{}"
 
 INVALID_INDEX = 0xFF
 MAX_NAME_LENGTH = 32
@@ -332,7 +347,120 @@ class InfoCardProbe(Probe):
         return [Utterance(f"{title}. {description}", interrupt=True, priority=8)]
 
 
+# The title screen carries no text at all — the prompt is a picture of a Wii
+# Remote with A and B lit up, and a pane sweep there returns zero text panes.
+# So unlike everywhere else in this file, this string is authored rather than
+# read from the game. It is the one place where staying silent would leave a
+# blind player with no way to know what to press.
+TITLE_ANNOUNCEMENT = ("Rhythm Heaven Fever, title screen. "
+                      "Hold the Wii Remote sideways and press A and B together "
+                      "to continue.")
+
+
+class TitleScreenProbe(Probe):
+    """Announces the title screen, detected by it having no text panes at all.
+
+    Every other screen seen so far exposes at least twenty. The check is a full
+    MEM2 sweep, so it is rate-limited and switches itself off permanently as
+    soon as any other screen appears — it only ever runs during the few seconds
+    the title screen is up.
+
+    UNVERIFIED: the boot logos presumably also have no text panes. If this
+    announces too early, gate it on something else.
+    """
+
+    name = "title_screen"
+    interval = 1.0
+    stable_ticks = 1
+
+    def __init__(self) -> None:
+        self._panes = None
+        self._done = False
+        self._next_scan = 0.0
+
+    def reset(self) -> None:
+        self._panes = None
+        self._done = False
+        self._next_scan = 0.0
+
+    def read(self, link) -> Optional[Hashable]:
+        if self._done:
+            return None
+        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            self._done = True
+            return None
+
+        now = time.monotonic()
+        if now < self._next_scan:
+            return None
+        self._next_scan = now + 2.0
+
+        if self._panes is None:
+            self._panes = panes.PaneIndex(link)
+        if self._panes.scan():
+            self._done = True      # some other screen is up; stop sweeping
+            return None
+        return ("title",)
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        return [Utterance(TITLE_ANNOUNCEMENT, interrupt=True, priority=9)]
+
+
+class FileSelectProbe(Probe):
+    """Speaks the highlighted save slot on the file select screen.
+
+    Slot contents come from the game: a slot with a save owns Flow and Medals
+    panes, and a slot without them is an empty "New Game" box. The empty label
+    is ours — the game draws those words as artwork, not text.
+
+    Gated on the game grid being inactive, so it stays quiet once play starts.
+    """
+
+    name = "file_select"
+    interval = 0.1
+    stable_ticks = 2
+
+    def __init__(self) -> None:
+        self._panes = None
+        self._scanned = False
+
+    def reset(self) -> None:
+        self._panes = None
+        self._scanned = False
+
+    def read(self, link) -> Optional[Hashable]:
+        # A valid grid index means we are in the game tower, not the file list.
+        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            return None
+        slot = link.u8(ADDR_FILE_SLOT)
+        if slot is None or slot >= FILE_SLOT_COUNT:
+            return None
+
+        if self._panes is None:
+            self._panes = panes.PaneIndex(link)
+        # One full sweep caches every slot's panes at once. Asking only for the
+        # ones we want would rescan forever on empty slots, whose Flow and
+        # Medals panes legitimately do not exist.
+        if not self._panes.ensure([PANE_FILE_PROMPT]):
+            return None
+        if not self._scanned:
+            self._panes.scan()
+            self._scanned = True
+
+        flow = self._panes.text(PANE_FILE_FLOW.format(slot))
+        medals = self._panes.text(PANE_FILE_MEDALS.format(slot))
+        if flow and medals:
+            return (slot, f"File {slot + 1}. Flow {flow}. {medals} medals.")
+        return (slot, f"File {slot + 1}. New game.")
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        _slot, text = current
+        return [Utterance(text, interrupt=True, priority=6)]
+
+
 def build_probes() -> List[Probe]:
-    probes: List[Probe] = [GameIdentityProbe(), GridCursorProbe(), InfoCardProbe()]
+    probes: List[Probe] = [GameIdentityProbe(), TitleScreenProbe(), GridCursorProbe(),
+                           InfoCardProbe(),
+                           FileSelectProbe()]
     probes.extend(WatchProbe(w) for w in WATCHES)
     return probes
