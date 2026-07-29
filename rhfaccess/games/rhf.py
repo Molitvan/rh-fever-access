@@ -303,6 +303,15 @@ def archive_index_for(cursor_index: int) -> Optional[int]:
     return ARCHIVE_FIRST_REMIX + row
 
 
+def set_of(cursor_index: int) -> Optional[int]:
+    """1-based set (row) number for a cursor position, or None for the extras."""
+    slot = cursor_index - GRID_FIRST_INDEX
+    if slot < 0:
+        return None
+    row = slot // ROW_LENGTH
+    return row + 1 if row < TOTAL_ROWS else None
+
+
 def label_for(cursor_index: int, text_archive) -> Optional[str]:
     """The name to speak for a cursor position, or None to stay silent."""
     if cursor_index in EXTRAS:
@@ -384,11 +393,19 @@ class GridCursorProbe(Probe):
         # Coming back from a game's info card is not a fresh arrival.
         visit = self._tracker.enter("grid", quiet_from=("card",))
         self._intro.update(visit)
-        return (visit, index, label)
+        return (visit, index, label, set_of(index))
 
     def describe(self, previous, current) -> Iterable[Utterance]:
-        _visit, _index, label = current
+        _visit, _index, label, current_set = current
         intro = INTRO_GAME_GRID if self._intro.take() else None
+
+        # Left and right jump a whole set, and landing in a new set with only
+        # the game's name spoken loses your place entirely. Say which set it is
+        # — but only when it actually changed, not on every move within one.
+        previous_set = previous[3] if previous else None
+        if current_set is not None and (previous is None or previous_set != current_set):
+            label = f"Set {current_set}. {label}"
+
         return _with_intro(intro, label, priority=5)
 
 
@@ -498,6 +515,50 @@ class TitleScreenProbe(Probe):
         return [Utterance(TITLE_ANNOUNCEMENT, interrupt=True, priority=9)]
 
 
+# In-game tutorial speech bubbles ("Ookii! (See what I do, then copy it!)").
+# Advancing the tutorial replaces the text in this one pane, so speaking on
+# change follows the whole sequence.
+PANE_TUTORIAL = "T_message_00"
+
+
+class TutorialProbe(Probe):
+    """Reads the tutorial bubbles shown when a game starts.
+
+    Gameplay itself has no text panes at all, so this is the only text the
+    game puts on screen once a game begins — and it is the part that explains
+    what you are supposed to do.
+    """
+
+    name = "tutorial"
+    interval = 0.15
+    stable_ticks = 3
+    forget_after = 40
+
+    def __init__(self) -> None:
+        self._panes = None
+
+    def reset(self) -> None:
+        self._panes = None
+
+    def read(self, link) -> Optional[Hashable]:
+        # A live grid index means we are in the menu, not in a game.
+        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            return None
+        if self._panes is None:
+            # This pane does not exist until a game has started, and a sweep is
+            # expensive, so look for it rarely rather than every few seconds.
+            self._panes = panes.PaneIndex(link, rescan_interval=10.0)
+        if not self._panes.ensure([PANE_TUTORIAL]):
+            return None
+        text = self._panes.text(PANE_TUTORIAL)
+        if not text:
+            return None
+        return text
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        return [Utterance(current, interrupt=True, priority=7)]
+
+
 class FileSelectProbe(Probe):
     """Speaks the highlighted save slot on the file select screen.
 
@@ -588,6 +649,6 @@ def build_probes() -> List[Probe]:
     tracker = ScreenTracker()
     probes: List[Probe] = [GameIdentityProbe(), TitleScreenProbe(),
                            GridCursorProbe(tracker), InfoCardProbe(tracker),
-                           FileSelectProbe(tracker)]
+                           FileSelectProbe(tracker), TutorialProbe()]
     probes.extend(WatchProbe(w) for w in WATCHES)
     return probes

@@ -18,6 +18,11 @@ Working today:
 - **Game info card** — select a game and it reads the card: *"Tambourine. Ready to play
   a little Simian Says on the tambourine?"*
 - **Save file select** — *"File 1. Flow 89. 16 medals."* / *"File 2. New game."*
+- **Tutorial bubbles** — *"Ookii! (See what I do, then copy it!)"*, following the
+  sequence as you advance it. Gameplay itself has no text panes at all, so this is the
+  only text the game shows once a game begins.
+- **Set changes** — left/right jump a whole set, so those announce *"Set 2. Fork
+  Lifter"*; moving within a set just names the game.
 - **Title screen** — an authored prompt (see below), because the screen has no text.
 
 ### Reading on-screen text in general
