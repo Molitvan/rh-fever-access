@@ -73,15 +73,28 @@ def _send(scan: int, keyup: bool, extended: bool) -> None:
 
 
 def tap(key: str, hold: float = 0.08) -> None:
-    """Press and release one key, holding long enough for the game to sample it."""
+    """Press and release one key, holding long enough for the game to sample it.
+
+    The release is in a finally block on purpose. A lost keyup leaves Dolphin
+    believing the D-pad is held, and the menu cursor then scrolls on its own —
+    which looks exactly like a memory-reading bug and is not one.
+    """
     key = key.upper()
     if key not in SCANCODES:
         raise ValueError(f"Unknown key {key!r}")
     scan = SCANCODES[key]
     extended = key in EXTENDED
     _send(scan, False, extended)
-    time.sleep(hold)
-    _send(scan, True, extended)
+    try:
+        time.sleep(hold)
+    finally:
+        _send(scan, True, extended)
+
+
+def release_all() -> None:
+    """Send keyup for every mapped key, clearing anything left stuck."""
+    for key, scan in SCANCODES.items():
+        _send(scan, True, key in EXTENDED)
 
 
 def find_dolphin() -> Optional[int]:
@@ -163,4 +176,5 @@ def grab() -> Optional[int]:
     if hwnd is None:
         return None
     focus(hwnd)
+    release_all()   # start from a clean slate; nothing should be held down
     return hwnd

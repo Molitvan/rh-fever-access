@@ -189,6 +189,76 @@ PANE_FILE_MEDALS = "T_medal_num_0{}"
 INVALID_INDEX = 0xFF
 MAX_NAME_LENGTH = 32
 
+# Third pane on the info card: the game's own control hint, e.g.
+# "A: Play!  B: Go back." Preferred over writing our own.
+PANE_CARD_CONTROLS = "T_comment_00"
+
+# Orientation lines, spoken once on arriving at a screen and then not repeated
+# while moving around inside it. Audio games do this because a screen reader
+# user gets no free glance at the layout: without it you hear "File 2" with no
+# idea what a file is or how to act on it.
+#
+# These describe *what the buttons do*, which the game only conveys visually,
+# so they are authored. Item names and anything the game states in text are
+# still read from the game.
+INTRO_FILE_SELECT = ("File menu. Use the D-pad to move between save files, "
+                     "and press A to select one.")
+INTRO_GAME_GRID = ("Game menu. Up and down move through the games in a set. "
+                   "Left and right jump between sets. Press A to select a game.")
+
+
+class ScreenTracker:
+    """Remembers which screen is up, so intros play on arrival only.
+
+    Shared by the screen probes. Returning to the grid from a game's info card
+    is not a fresh arrival — you never left the menu — so the grid intro does
+    not replay every time you look at a game and back out.
+    """
+
+    def __init__(self) -> None:
+        self.current: Optional[str] = None
+        self.visits: Dict[str, int] = {}
+
+    def enter(self, name: str, quiet_from: Iterable[str] = ()) -> int:
+        """Mark `name` active; returns that screen's own arrival count.
+
+        Counts are per screen. A single shared counter does not work: opening a
+        card would bump it, and the grid would then see a changed value when you
+        came back and replay its intro.
+        """
+        if self.current != name:
+            if self.current not in tuple(quiet_from):
+                self.visits[name] = self.visits.get(name, 0) + 1
+            self.current = name
+        return self.visits.get(name, 0)
+
+
+class _IntroState:
+    """Tracks whether this screen's orientation line is still owed."""
+
+    def __init__(self) -> None:
+        self.pending = False
+        self._visit = -1
+
+    def update(self, visit: int) -> None:
+        if visit != self._visit:
+            self._visit = visit
+            self.pending = True
+
+    def take(self) -> bool:
+        was, self.pending = self.pending, False
+        return was
+
+
+def _with_intro(intro: Optional[str], item: str, priority: int) -> List[Utterance]:
+    """Intro first, then the item queued behind it so it is not cut off."""
+    if not intro:
+        return [Utterance(item, interrupt=True, priority=priority)]
+    return [
+        Utterance(intro, interrupt=True, priority=priority + 1),
+        Utterance(item, interrupt=False, priority=priority),
+    ]
+
 # The cursor walks the tower one entry at a time: four games, then that row's
 # remix, then the next row. The text archive does not store them that way — it
 # keeps every game in one consecutive run and every remix in another, far
@@ -261,15 +331,22 @@ class GridCursorProbe(Probe):
 
     name = "grid_cursor"
     interval = 0.05
-    stable_ticks = 2
+    # Screens flicker while a card animates open or shut. Confirming over
+    # 0.2s and remembering for a full second rides that out, without being
+    # slow enough to notice when actually moving the cursor.
+    stable_ticks = 4
+    forget_after = 20
 
-    def __init__(self) -> None:
+    def __init__(self, tracker: "ScreenTracker") -> None:
         self._archive = None
         self._entry_base = None
+        self._tracker = tracker
+        self._intro = _IntroState()
 
     def reset(self) -> None:
         self._archive = None
         self._entry_base = None
+        self._intro = _IntroState()
 
     def _text_archive(self, link):
         if self._archive is not None and self._archive.still_valid():
@@ -303,11 +380,16 @@ class GridCursorProbe(Probe):
         label = label_for(index, self._text_archive(link))
         if label is None:
             return None
-        return (index, label)
+
+        # Coming back from a game's info card is not a fresh arrival.
+        visit = self._tracker.enter("grid", quiet_from=("card",))
+        self._intro.update(visit)
+        return (visit, index, label)
 
     def describe(self, previous, current) -> Iterable[Utterance]:
-        _index, label = current
-        return [Utterance(label, interrupt=True, priority=5)]
+        _visit, _index, label = current
+        intro = INTRO_GAME_GRID if self._intro.take() else None
+        return _with_intro(intro, label, priority=5)
 
 
 class InfoCardProbe(Probe):
@@ -320,10 +402,14 @@ class InfoCardProbe(Probe):
 
     name = "info_card"
     interval = 0.1
-    stable_ticks = 2
+    # Same reasoning as the grid: do not re-announce the card because the
+    # state flickered for a frame or two mid-animation.
+    stable_ticks = 4
+    forget_after = 20
 
-    def __init__(self) -> None:
+    def __init__(self, tracker: "ScreenTracker") -> None:
         self._panes = None
+        self._tracker = tracker
 
     def reset(self) -> None:
         self._panes = None
@@ -333,18 +419,24 @@ class InfoCardProbe(Probe):
             return None
         if self._panes is None:
             self._panes = panes.PaneIndex(link)
-        wanted = (PANE_CARD_TITLE, PANE_CARD_TEXT)
-        if not self._panes.ensure(wanted):
-            return None
+        # Look for the controls pane too, but do not require it: the title and
+        # description are what must be there.
+        self._panes.ensure((PANE_CARD_TITLE, PANE_CARD_TEXT, PANE_CARD_CONTROLS))
         title = self._panes.text(PANE_CARD_TITLE)
         description = self._panes.text(PANE_CARD_TEXT)
         if not title or not description:
             return None
-        return (title, description)
+        # The card states its own controls, so read them rather than invent any.
+        controls = self._panes.text(PANE_CARD_CONTROLS)
+        self._tracker.enter("card")
+        return (title, description, controls)
 
     def describe(self, previous, current) -> Iterable[Utterance]:
-        title, description = current
-        return [Utterance(f"{title}. {description}", interrupt=True, priority=8)]
+        title, description, controls = current
+        text = f"{title}. {description}"
+        if controls:
+            text = f"{text} {controls}"
+        return [Utterance(text, interrupt=True, priority=8)]
 
 
 # The title screen carries no text at all — the prompt is a picture of a Wii
@@ -418,19 +510,38 @@ class FileSelectProbe(Probe):
 
     name = "file_select"
     interval = 0.1
-    stable_ticks = 2
+    # Loading a save tears this screen down over several seconds, during which
+    # the slot byte sits in freed memory and takes on junk values. Demanding a
+    # longer run of identical reads rides that out.
+    stable_ticks = 8
 
-    def __init__(self) -> None:
+    def __init__(self, tracker: "ScreenTracker") -> None:
         self._panes = None
         self._scanned = False
+        self._tracker = tracker
+        self._intro = _IntroState()
+        self._slots = {}
+        self._finished = False
 
     def reset(self) -> None:
         self._panes = None
         self._scanned = False
+        self._intro = _IntroState()
+        self._slots = {}
+        self._finished = False
 
     def read(self, link) -> Optional[Hashable]:
-        # A valid grid index means we are in the game tower, not the file list.
+        if self._finished:
+            return None
+        # A valid grid index means we are in the game tower. The file select
+        # only ever appears once, before that, so once the tower is up this
+        # screen is gone for good and must never speak again.
         if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            self._finished = True
+            return None
+        # Same value the info card uses; here it is corroboration, not
+        # identification — it drops away as the screen is torn down.
+        if link.u32(ADDR_MENU_STATE) != MENU_STATE_CARD:
             return None
         slot = link.u8(ADDR_FILE_SLOT)
         if slot is None or slot >= FILE_SLOT_COUNT:
@@ -450,17 +561,33 @@ class FileSelectProbe(Probe):
         flow = self._panes.text(PANE_FILE_FLOW.format(slot))
         medals = self._panes.text(PANE_FILE_MEDALS.format(slot))
         if flow and medals:
-            return (slot, f"File {slot + 1}. Flow {flow}. {medals} medals.")
-        return (slot, f"File {slot + 1}. New game.")
+            text = f"File {slot + 1}. Flow {flow}. {medals} medals."
+        else:
+            text = f"File {slot + 1}. New game."
+
+        # A slot cannot change contents while the screen is up, so the first
+        # reading of each is the truth. If a later read disagrees, the panes
+        # are being freed underneath us — stay quiet rather than downgrade a
+        # real save to "New game".
+        remembered = self._slots.setdefault(slot, text)
+        if remembered != text:
+            return None
+
+        visit = self._tracker.enter("file")
+        self._intro.update(visit)
+        return (visit, slot, text)
 
     def describe(self, previous, current) -> Iterable[Utterance]:
-        _slot, text = current
-        return [Utterance(text, interrupt=True, priority=6)]
+        _visit, _slot, text = current
+        intro = INTRO_FILE_SELECT if self._intro.take() else None
+        return _with_intro(intro, text, priority=6)
 
 
 def build_probes() -> List[Probe]:
-    probes: List[Probe] = [GameIdentityProbe(), TitleScreenProbe(), GridCursorProbe(),
-                           InfoCardProbe(),
-                           FileSelectProbe()]
+    # One tracker shared by the screen probes so they agree on where we are.
+    tracker = ScreenTracker()
+    probes: List[Probe] = [GameIdentityProbe(), TitleScreenProbe(),
+                           GridCursorProbe(tracker), InfoCardProbe(tracker),
+                           FileSelectProbe(tracker)]
     probes.extend(WatchProbe(w) for w in WATCHES)
     return probes
