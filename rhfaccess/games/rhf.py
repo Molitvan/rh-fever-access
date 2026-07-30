@@ -615,6 +615,12 @@ PANE_RESULT_LINES = ("T_Comment_00", "T_Comment_01")
 #    There are now 47 gifts left to get. Keep going!'
 PANE_PERFECT = "T_pft_00"
 
+# Shown after a medal is awarded, e.g. Samurai Slice's "Thanks, mister! You're
+# the best!". Capital M — this is NOT the tutorial's lowercase T_message_00.
+# The game's pane names are case sensitive and it reuses words across screens,
+# so check the case before assuming two panes are the same one.
+PANE_REWARD = "T_Message_00"
+
 
 class ResultProbe(Probe):
     """Reads what the game says after a game finishes.
@@ -648,7 +654,8 @@ class ResultProbe(Probe):
             self._panes = panes.PaneIndex(link, rescan_interval=8.0)
         # Every one of these is optional: the epilogue and the Perfect message
         # are different screens, so ask for them all and use whatever is there.
-        wanted = (PANE_RESULT_CAPTION,) + PANE_RESULT_LINES + (PANE_PERFECT,)
+        wanted = ((PANE_RESULT_CAPTION,) + PANE_RESULT_LINES
+                  + (PANE_PERFECT, PANE_REWARD))
         self._panes.ensure(wanted)
         parts = tuple(self._panes.text(name) or "" for name in wanted)
         if not any(parts):

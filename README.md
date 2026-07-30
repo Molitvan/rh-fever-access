@@ -28,6 +28,9 @@ Working today:
 - **Perfect rewards** — *"'Figure Fighter' You've earned a gift! Listen to it at the
   café! There are now 47 gifts left to get. Keep going!"* (pane `T_pft_00`; on that
   screen the epilogue panes are empty, so the two arrive separately)
+- **Post-medal message** — *"Thanks, mister! You're the best!"* (pane
+  `T_Message_00` — capital M, a different pane from the tutorial's lowercase
+  `T_message_00`; the game's pane names are case sensitive)
 - **Title screen** — an authored prompt (see below), because the screen has no text.
 
 ### Telling the info card apart from the epilogue
