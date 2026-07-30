@@ -28,6 +28,7 @@ Working today:
 - **Perfect rewards** — *"'Figure Fighter' You've earned a gift! Listen to it at the
   café! There are now 47 gifts left to get. Keep going!"* (pane `T_pft_00`; on that
   screen the epilogue panes are empty, so the two arrive separately)
+- **Title screen** — an authored prompt (see below), because the screen has no text.
 
 ### Telling the info card apart from the epilogue
 
@@ -39,7 +40,6 @@ written down as one in `ScreenTracker`.
 
 The **rank** (Try Again / OK / Superb) is *not* covered — it appears to be artwork
 rather than text, and no rank pane showed up in a sweep of the epilogue screen.
-- **Title screen** — an authored prompt (see below), because the screen has no text.
 
 ### Reading on-screen text in general
 
