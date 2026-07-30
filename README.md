@@ -37,10 +37,20 @@ a time, and it should extend to dialogue, results and other screens.
 re-validate cheaply per read. `PaneIndex.scan()` with no arguments dumps every live
 text pane, which is the fastest way to find what a new screen exposes.
 
-One catch: **a pane keeps its last string after its screen goes away.** Nothing in the
-pane says whether it is visible, so every use must be gated on game state. The info
-card is gated on `0x8032A5C0` (1 = grid, 3 = card open); without that it would announce
-a stale description each time the grid redrew.
+Two catches, both learned the hard way:
+
+**A pane keeps its last string after its screen goes away**, and nothing in the pane
+says whether it is visible. Every use must be gated on game state.
+
+**Worse, a pane can be live but not on screen.** The info card's title and description
+panes are kept in step with the highlighted game *while you scroll the grid*, with no
+card displayed — the game is preloading them. Reading them on change therefore
+announced a description for every cursor move. Pane text is what the game *would*
+draw, not proof that it is drawing it.
+
+The card is gated on the grid index instead: it holds a valid entry number while you
+move around the tower and `0xFF` once the cursor is handed to the card. That is a
+property of the screen rather than of the text, which is what makes it trustworthy.
 
 ### Verified
 
@@ -49,7 +59,7 @@ a stale description each time the grid redrew.
 | Game-select cursor index | `0x80320404` (u8, mirrored at `+1`) | Automated return-to-origin scan; walks ±1 per press, `0xFF` when invalid |
 | Selected entry object | `0x80320430` → MEM2, 0x50-byte stride | Pointer moves exactly one stride per press |
 | Text archive (`DAT1`) | located at runtime | 292 records; index 1 = "Title Screen", 104 = "Hole in One" |
-| Menu state | `0x8032A5C0` (u32) | 1 = grid, 3 = info card; found by driving Z/X through the scanner. **Not a global screen ID** — the file select also reads 3 |
+| ~~Menu state~~ `0x8032A5C0` | **do not use** | Looked like 1 = grid / 3 = card when found by driving Z/X. A live trace while scrolling showed it reading 3 throughout. Not a screen ID |
 | File slot index | `0x90DEBB71` (u8) | 0-3 over the 2x2 slot grid; survived a full game reboot at the same address |
 | Layout text panes | located by name at runtime | pointer at name + `0x1C`; verified against the on-screen card |
 | MEM2 access | `rhfaccess/rawmem.py` | dolphin-memory-engine cannot read MEM2 on current Dolphin builds |

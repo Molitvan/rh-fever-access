@@ -162,12 +162,17 @@ ADDR_GRID_INDEX = 0x80320404
 ADDR_GRID_ENTRY_PTR = 0x80320430
 ENTRY_STRIDE = 0x50
 
-# Which part of the game-select screen is up. Found by driving Z/X (select and
-# back) through the automated scanner: it returns to 1 every time the card
-# closes and reads 3 for as long as it is open.
+# DO NOT gate on this. It looked like a screen ID when found by driving Z/X
+# through the scanner — 1 on the grid, 3 with the card open — but a live trace
+# while scrolling showed it reading 3 the whole time. Whatever it tracks, it is
+# not which screen is up. Gating on it made the grid go silent and the card
+# announce on every cursor move. Kept only so nobody rediscovers it and repeats
+# the mistake.
 ADDR_MENU_STATE = 0x8032A5C0
-MENU_STATE_GRID = 1
-MENU_STATE_CARD = 3
+
+# The grid index is the real discriminator between the two: it holds a valid
+# entry number while you move around the tower, and 0xFF once the cursor is
+# handed off to the card (or to a game).
 
 # Text panes on the info card that appears when a game is selected.
 PANE_CARD_TITLE = "T_game_title_00"
@@ -351,11 +356,13 @@ class GridCursorProbe(Probe):
         self._entry_base = None
         self._tracker = tracker
         self._intro = _IntroState()
+        self._last_set = None
 
     def reset(self) -> None:
         self._archive = None
         self._entry_base = None
         self._intro = _IntroState()
+        self._last_set = None
 
     def _text_archive(self, link):
         if self._archive is not None and self._archive.still_valid():
@@ -364,8 +371,6 @@ class GridCursorProbe(Probe):
         return self._archive
 
     def read(self, link) -> Optional[Hashable]:
-        if link.u32(ADDR_MENU_STATE) != MENU_STATE_GRID:
-            return None
         index = link.u8(ADDR_GRID_INDEX)
         if index is None or index == INVALID_INDEX:
             return None
@@ -401,10 +406,14 @@ class GridCursorProbe(Probe):
 
         # Left and right jump a whole set, and landing in a new set with only
         # the game's name spoken loses your place entirely. Say which set it is
-        # — but only when it actually changed, not on every move within one.
-        previous_set = previous[3] if previous else None
-        if current_set is not None and (previous is None or previous_set != current_set):
+        # — but only when it actually changed.
+        #
+        # Tracked here rather than read off `previous`, because `previous` is
+        # None whenever the probe was idle long enough to forget: backing out
+        # of a card would otherwise re-announce a set you never left.
+        if current_set is not None and current_set != self._last_set:
             label = f"Set {current_set}. {label}"
+        self._last_set = current_set
 
         return _with_intro(intro, label, priority=5)
 
@@ -419,10 +428,10 @@ class InfoCardProbe(Probe):
 
     name = "info_card"
     interval = 0.1
-    # Same reasoning as the grid: do not re-announce the card because the
-    # state flickered for a frame or two mid-animation.
+    # Confirm over 0.4s so the open/close animation cannot trigger it, but
+    # forget quickly so reopening the same game's card speaks again.
     stable_ticks = 4
-    forget_after = 20
+    forget_after = 8
 
     def __init__(self, tracker: "ScreenTracker") -> None:
         self._panes = None
@@ -432,10 +441,17 @@ class InfoCardProbe(Probe):
         self._panes = None
 
     def read(self, link) -> Optional[Hashable]:
-        if link.u32(ADDR_MENU_STATE) != MENU_STATE_CARD:
+        # The card is up only once the grid has released the cursor. Do not be
+        # tempted to detect it from the pane text instead: the game keeps the
+        # card's title and description in step with the highlighted game while
+        # you scroll, so those change constantly with no card on screen.
+        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
             return None
         if self._panes is None:
-            self._panes = panes.PaneIndex(link)
+            # Before any card has been opened these panes do not exist, and a
+            # sweep costs about a second — so look rarely rather than every
+            # few seconds while sitting on some other 0xFF screen.
+            self._panes = panes.PaneIndex(link, rescan_interval=8.0)
         # Look for the controls pane too, but do not require it: the title and
         # description are what must be there.
         self._panes.ensure((PANE_CARD_TITLE, PANE_CARD_TEXT, PANE_CARD_CONTROLS))
@@ -599,10 +615,6 @@ class FileSelectProbe(Probe):
         # screen is gone for good and must never speak again.
         if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
             self._finished = True
-            return None
-        # Same value the info card uses; here it is corroboration, not
-        # identification — it drops away as the screen is torn down.
-        if link.u32(ADDR_MENU_STATE) != MENU_STATE_CARD:
             return None
         slot = link.u8(ADDR_FILE_SLOT)
         if slot is None or slot >= FILE_SLOT_COUNT:

@@ -85,8 +85,18 @@ the first thing to run when adding support for a new screen: it shows what the
 screen exposes and what the names are.
 
 **A pane keeps its last string after its screen closes**, and nothing in the pane
-indicates visibility. Always gate on game state (e.g. `0x8032A5C0` for the info
-card) or you will announce stale text.
+indicates visibility. Always gate on game state.
+
+**A pane can also be live while off screen.** The info card's title and
+description track the highlighted game as you scroll the grid, with no card
+displayed. Pane text is what the game *would* draw, never proof that it is on
+screen. Gate on a property of the screen — for the card, `ADDR_GRID_INDEX ==
+0xFF` — not on the text changing.
+
+`0x8032A5C0` is **not** a screen ID, despite looking like one when found by
+driving select/back through the scanner. A live trace showed it reading 3 while
+scrolling the grid. Gating on it silenced the grid and made the card announce
+on every cursor move.
 
 Menu layout (see README for the full table): the cursor walks one array. idx 0–2
 are the extras, 3–4 locked, then each block of five is a row of four games plus
