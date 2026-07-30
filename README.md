@@ -23,6 +23,19 @@ Working today:
   only text the game shows once a game begins.
 - **Set changes** — left/right jump a whole set, so those announce *"Set 2. Fork
   Lifter"*; moving within a set just names the game.
+- **Post-game epilogue** — *"Scientific Findings. They sure were lively little
+  creatures! ...And their color trails were so vibrant!"*
+
+### Telling the info card apart from the epilogue
+
+Both sit behind a `0xFF` grid index and both keep live panes, so neither can be
+identified from its text. They are separated by timing instead: a card is opened
+straight off the grid (`< 3s` since the grid was active), while an epilogue can only
+follow a game, which takes longer than that (`> 5s`). It is a heuristic, and it is
+written down as one in `ScreenTracker`.
+
+The **rank** (Try Again / OK / Superb) is *not* covered — it appears to be artwork
+rather than text, and no rank pane showed up in a sweep of the epilogue screen.
 - **Title screen** — an authored prompt (see below), because the screen has no text.
 
 ### Reading on-screen text in general

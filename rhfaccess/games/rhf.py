@@ -220,9 +220,27 @@ class ScreenTracker:
     not replay every time you look at a game and back out.
     """
 
+    # Both the info card and the post-game epilogue sit behind a 0xFF grid
+    # index, and both keep live panes, so neither can be told from the other by
+    # reading text. What separates them is timing: a card is opened straight
+    # off the grid, while an epilogue only arrives after a game has been played
+    # for a while. These windows encode that.
+    CARD_MAX_GAP = 3.0      # a card follows the grid almost immediately
+    RESULT_MIN_GAP = 5.0    # an epilogue cannot; a game takes longer than this
+
     def __init__(self) -> None:
         self.current: Optional[str] = None
         self.visits: Dict[str, int] = {}
+        self.last_grid_seen = 0.0
+
+    def note_grid(self, active: bool) -> None:
+        if active:
+            self.last_grid_seen = time.monotonic()
+
+    def since_grid(self) -> float:
+        if not self.last_grid_seen:
+            return float("inf")
+        return time.monotonic() - self.last_grid_seen
 
     def enter(self, name: str, quiet_from: Iterable[str] = ()) -> int:
         """Mark `name` active; returns that screen's own arrival count.
@@ -372,6 +390,7 @@ class GridCursorProbe(Probe):
 
     def read(self, link) -> Optional[Hashable]:
         index = link.u8(ADDR_GRID_INDEX)
+        self._tracker.note_grid(index is not None and index != INVALID_INDEX)
         if index is None or index == INVALID_INDEX:
             return None
         # The byte is mirrored; if the copies disagree we caught a partial write.
@@ -446,6 +465,11 @@ class InfoCardProbe(Probe):
         # card's title and description in step with the highlighted game while
         # you scroll, so those change constantly with no card on screen.
         if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            return None
+        # A card opens straight off the grid. If the grid has not been active
+        # for seconds we are somewhere else behind a 0xFF index — in a game, or
+        # on the epilogue — and the card's panes are merely stale.
+        if self._tracker.since_grid() > ScreenTracker.CARD_MAX_GAP:
             return None
         if self._panes is None:
             # Before any card has been opened these panes do not exist, and a
@@ -575,6 +599,55 @@ class TutorialProbe(Probe):
         return [Utterance(current, interrupt=True, priority=7)]
 
 
+# The epilogue shown after finishing a game: a caption and one or two lines of
+# flavour text, e.g. "Scientific Findings" / "They sure were lively little
+# creatures!" / "...And their color trails were so vibrant!"
+#
+# Note the capital C — these are different panes from the info card's
+# lowercase "T_comment_00", which holds the button hints.
+PANE_RESULT_CAPTION = "T_Caption_00"
+PANE_RESULT_LINES = ("T_Comment_00", "T_Comment_01")
+
+
+class ResultProbe(Probe):
+    """Reads the epilogue screen shown after a game finishes."""
+
+    name = "result"
+    interval = 0.15
+    stable_ticks = 3
+    forget_after = 20
+
+    def __init__(self, tracker: "ScreenTracker") -> None:
+        self._panes = None
+        self._tracker = tracker
+
+    def reset(self) -> None:
+        self._panes = None
+
+    def read(self, link) -> Optional[Hashable]:
+        # Back on the tower means the epilogue is over.
+        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            return None
+        # The mirror of the card's rule: an epilogue only follows a game, so
+        # the grid must have been gone for a while. Without this, opening a
+        # card would read out the previous game's epilogue.
+        if self._tracker.since_grid() < ScreenTracker.RESULT_MIN_GAP:
+            return None
+        if self._panes is None:
+            self._panes = panes.PaneIndex(link, rescan_interval=8.0)
+        if not self._panes.ensure([PANE_RESULT_CAPTION]):
+            return None
+        caption = self._panes.text(PANE_RESULT_CAPTION)
+        if not caption:
+            return None
+        lines = tuple(self._panes.text(name) or "" for name in PANE_RESULT_LINES)
+        return (caption,) + lines
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        text = ". ".join(part for part in current if part)
+        return [Utterance(text, interrupt=True, priority=8)]
+
+
 class FileSelectProbe(Probe):
     """Speaks the highlighted save slot on the file select screen.
 
@@ -661,6 +734,6 @@ def build_probes() -> List[Probe]:
     tracker = ScreenTracker()
     probes: List[Probe] = [GameIdentityProbe(), TitleScreenProbe(),
                            GridCursorProbe(tracker), InfoCardProbe(tracker),
-                           FileSelectProbe(tracker), TutorialProbe()]
+                           FileSelectProbe(tracker), TutorialProbe(), ResultProbe(tracker)]
     probes.extend(WatchProbe(w) for w in WATCHES)
     return probes
