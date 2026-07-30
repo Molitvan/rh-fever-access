@@ -608,9 +608,20 @@ class TutorialProbe(Probe):
 PANE_RESULT_CAPTION = "T_Caption_00"
 PANE_RESULT_LINES = ("T_Comment_00", "T_Comment_01")
 
+# Earning a Perfect puts its own message on screen, and on that screen the
+# epilogue panes are empty — so the two arrive separately and either may be
+# the only one with text:
+#   '"Figure Fighter" You've earned a gift! Listen to it at the cafe!
+#    There are now 47 gifts left to get. Keep going!'
+PANE_PERFECT = "T_pft_00"
+
 
 class ResultProbe(Probe):
-    """Reads the epilogue screen shown after a game finishes."""
+    """Reads what the game says after a game finishes.
+
+    Covers the epilogue ("Scientific Findings ...") and the Perfect reward
+    message, which are separate screens with separate panes.
+    """
 
     name = "result"
     interval = 0.15
@@ -635,13 +646,14 @@ class ResultProbe(Probe):
             return None
         if self._panes is None:
             self._panes = panes.PaneIndex(link, rescan_interval=8.0)
-        if not self._panes.ensure([PANE_RESULT_CAPTION]):
+        # Every one of these is optional: the epilogue and the Perfect message
+        # are different screens, so ask for them all and use whatever is there.
+        wanted = (PANE_RESULT_CAPTION,) + PANE_RESULT_LINES + (PANE_PERFECT,)
+        self._panes.ensure(wanted)
+        parts = tuple(self._panes.text(name) or "" for name in wanted)
+        if not any(parts):
             return None
-        caption = self._panes.text(PANE_RESULT_CAPTION)
-        if not caption:
-            return None
-        lines = tuple(self._panes.text(name) or "" for name in PANE_RESULT_LINES)
-        return (caption,) + lines
+        return parts
 
     def describe(self, previous, current) -> Iterable[Utterance]:
         text = ". ".join(part for part in current if part)

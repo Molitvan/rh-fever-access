@@ -25,6 +25,9 @@ Working today:
   Lifter"*; moving within a set just names the game.
 - **Post-game epilogue** — *"Scientific Findings. They sure were lively little
   creatures! ...And their color trails were so vibrant!"*
+- **Perfect rewards** — *"'Figure Fighter' You've earned a gift! Listen to it at the
+  café! There are now 47 gifts left to get. Keep going!"* (pane `T_pft_00`; on that
+  screen the epilogue panes are empty, so the two arrive separately)
 
 ### Telling the info card apart from the epilogue
 
