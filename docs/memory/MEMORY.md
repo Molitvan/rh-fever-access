@@ -1,0 +1,2 @@
+- [rhf-access project](rhf-access-project.md) — the Rhythm Heaven Fever accessibility companion: repo, access, where the real docs live
+- [Working style on rhf-access](rhf-access-working-style.md) — who verifies what on screen, and when not to touch the running game

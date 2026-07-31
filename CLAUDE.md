@@ -23,6 +23,7 @@ cytolk, numpy; Pillow is needed for `tools/sweep.py`).
 
 ```
 python run.py                     # the companion; --no-speech for console only
+python tools/panes_dump.py        # every live text pane — start here for a new screen
 python tools/step.py auto 12 S W  # automated memory scan (see below)
 python tools/sweep.py             # drive the menu, log + screenshot each stop
 ```
@@ -43,6 +44,8 @@ cp1252 console encoding.
 | `rhfaccess/games/panes.py` | Reads on-screen text by NW4R layout pane name |
 | `rhfaccess/games/rhf.py` | All RHF specifics: addresses, menu layout, probes |
 | `tools/scan.py` | Memory scanner core (numpy-vectorised, read-only) |
+| `tools/delta.py` | Filters scan candidates by *how much* they moved |
+| `tools/panes_dump.py` | Lists every live text pane — run this first for a new screen |
 | `tools/step.py` | One scan operation per invocation, state on disk |
 | `tools/pad.py` | Synthetic input + window capture |
 | `tools/sweep.py` | Menu walk producing a log plus screenshots |
@@ -71,7 +74,14 @@ Addresses in MEM1 (`0x80…`) have held across sessions. **Everything in MEM2
 - `0x80320404` — game-select cursor index, u8, mirrored at `+1`. `0xFF` means
   no valid selection.
 - `0x80320430` — pointer to the selected entry, array of `0x50`-byte structs.
-- `0x8032A5C0` — menu state, u32. 1 = grid, 3 = game info card open.
+- `0x8032A5C0` — **do not use.** It looked like a screen ID, and is not; see below.
+
+Screens are told apart by `ADDR_GRID_INDEX`: a valid entry number while moving
+around the tower, `0xFF` once the cursor is handed to a card, a game, or the
+file select. The card and the post-game screens both sit behind `0xFF`, so they
+are separated by *timing* — a card opens straight off the grid, an epilogue can
+only follow a game. That is a heuristic and is labelled as one in
+`ScreenTracker`.
 
 ## Reading on-screen text (start here for any new screen)
 
@@ -92,6 +102,19 @@ description track the highlighted game as you scroll the grid, with no card
 displayed. Pane text is what the game *would* draw, never proof that it is on
 screen. Gate on a property of the screen — for the card, `ADDR_GRID_INDEX ==
 0xFF` — not on the text changing.
+
+Not every pane behaves that way: the Notice dialog's panes are *cleared* when it
+is down, so there, having text really is proof. Check which kind you have before
+deciding on a gate.
+
+**Pane names are case sensitive and the game reuses words.** `T_message_00` is
+the tutorial bubble; `T_Message_00` is the post-medal message. Different
+screens, one letter apart.
+
+**Share the pane index.** Every probe must take its `PaneIndex` from
+`ScreenTracker.pane_index()`. A sweep costs ~0.14s and a probe sweeps whenever a
+pane it wants is absent, which is most of the time. Four probes with their own
+index pushed poll ticks past 800ms and speech lagged seconds behind the screen.
 
 `0x8032A5C0` is **not** a screen ID, despite looking like one when found by
 driving select/back through the scanner. A live trace showed it reading 3 while
@@ -140,6 +163,27 @@ time). Typically 25 million candidates to a handful in three cycles.
 Do not hand-scan with single-sample `changed`/`unchanged` comparisons. RAM is
 full of double buffers and animation counters that pass those by coin flip; that
 approach repeatedly converged on garbage before automation replaced it.
+
+## Working with the user
+
+They cannot see the screen. When something needs reading off it, that is your
+job: enlarge the Dolphin window, screenshot, read it, and **restore the window**
+(theirs is 174x198 at 681,298 — they do not need it visible).
+
+- Check game state before sending input. Pressing keys while they are mid-game
+  interferes with play.
+- `pad.tap` releases in a `finally` and `pad.grab` calls `release_all` first. A
+  lost keyup leaves Dolphin holding the D-pad and the cursor scrolls by itself —
+  which reads exactly like a memory-reading bug and is not one.
+- Run test copies of `run.py` under `timeout` and confirm none survive. Two
+  stray instances once talked over each other, and the older one was announcing
+  pre-fix names.
+- The engine swallows probe exceptions and treats them as "unverified", so a
+  broken probe goes *quiet* rather than crashing. After refactoring, call
+  `read()` on every probe and check for errors — suspiciously fast ticks mean
+  probes are failing, not that the code got faster.
+
+There is a copy of the project memories in `docs/memory/`.
 
 ## Style
 
