@@ -111,7 +111,10 @@ class PaneIndex:
         if now < self._next_scan:
             return False
         self._next_scan = now + self._rescan_interval
-        self.scan(wanted)
+        # A full sweep, not one filtered to `wanted`: it costs the same (the
+        # expense is reading MEM2, not matching names) and it caches every pane
+        # on screen, so other probes need not sweep for their own.
+        self.scan()
         return all(self.address(n) is not None for n in names)
 
     def scan(self, wanted: Optional[Iterable[str]] = None) -> Dict[str, int]:

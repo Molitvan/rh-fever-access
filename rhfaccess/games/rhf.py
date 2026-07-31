@@ -232,6 +232,21 @@ class ScreenTracker:
         self.current: Optional[str] = None
         self.visits: Dict[str, int] = {}
         self.last_grid_seen = 0.0
+        self._panes = None
+
+    def pane_index(self, link):
+        """The one pane index, shared by every probe that reads text.
+
+        This must not be per-probe. A sweep costs ~0.14s, and a probe sweeps
+        whenever a pane it wants is absent — which is most of the time, since
+        each screen only owns a few. With one index each, four probes swept
+        independently and single poll ticks took over 800ms, which is what made
+        speech lag behind the screen. Sharing means one sweep populates
+        everything at once.
+        """
+        if self._panes is None:
+            self._panes = panes.PaneIndex(link, rescan_interval=5.0)
+        return self._panes
 
     def note_grid(self, active: bool) -> None:
         if active:
@@ -472,10 +487,7 @@ class InfoCardProbe(Probe):
         if self._tracker.since_grid() > ScreenTracker.CARD_MAX_GAP:
             return None
         if self._panes is None:
-            # Before any card has been opened these panes do not exist, and a
-            # sweep costs about a second — so look rarely rather than every
-            # few seconds while sitting on some other 0xFF screen.
-            self._panes = panes.PaneIndex(link, rescan_interval=8.0)
+            self._panes = self._tracker.pane_index(link)
         # Look for the controls pane too, but do not require it: the title and
         # description are what must be there.
         self._panes.ensure((PANE_CARD_TITLE, PANE_CARD_TEXT, PANE_CARD_CONTROLS))
@@ -522,8 +534,9 @@ class TitleScreenProbe(Probe):
     interval = 1.0
     stable_ticks = 1
 
-    def __init__(self) -> None:
+    def __init__(self, tracker: "ScreenTracker") -> None:
         self._panes = None
+        self._tracker = tracker
         self._done = False
         self._next_scan = 0.0
 
@@ -545,7 +558,7 @@ class TitleScreenProbe(Probe):
         self._next_scan = now + 2.0
 
         if self._panes is None:
-            self._panes = panes.PaneIndex(link)
+            self._panes = self._tracker.pane_index(link)
         if self._panes.scan():
             self._done = True      # some other screen is up; stop sweeping
             return None
@@ -570,12 +583,13 @@ class TutorialProbe(Probe):
     """
 
     name = "tutorial"
-    interval = 0.15
-    stable_ticks = 3
+    interval = 0.1
+    stable_ticks = 2
     forget_after = 40
 
-    def __init__(self) -> None:
+    def __init__(self, tracker: "ScreenTracker") -> None:
         self._panes = None
+        self._tracker = tracker
 
     def reset(self) -> None:
         self._panes = None
@@ -585,9 +599,7 @@ class TutorialProbe(Probe):
         if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
             return None
         if self._panes is None:
-            # This pane does not exist until a game has started, and a sweep is
-            # expensive, so look for it rarely rather than every few seconds.
-            self._panes = panes.PaneIndex(link, rescan_interval=10.0)
+            self._panes = self._tracker.pane_index(link)
         if not self._panes.ensure([PANE_TUTORIAL]):
             return None
         text = self._panes.text(PANE_TUTORIAL)
@@ -630,8 +642,8 @@ class ResultProbe(Probe):
     """
 
     name = "result"
-    interval = 0.15
-    stable_ticks = 3
+    interval = 0.1
+    stable_ticks = 2
     forget_after = 20
 
     def __init__(self, tracker: "ScreenTracker") -> None:
@@ -651,7 +663,7 @@ class ResultProbe(Probe):
         if self._tracker.since_grid() < ScreenTracker.RESULT_MIN_GAP:
             return None
         if self._panes is None:
-            self._panes = panes.PaneIndex(link, rescan_interval=8.0)
+            self._panes = self._tracker.pane_index(link)
         # Every one of these is optional: the epilogue and the Perfect message
         # are different screens, so ask for them all and use whatever is there.
         wanted = ((PANE_RESULT_CAPTION,) + PANE_RESULT_LINES
@@ -681,12 +693,13 @@ class NoticeProbe(Probe):
     """Reads the Notice dialog, e.g. the offer of a Perfect attempt."""
 
     name = "notice"
-    interval = 0.15
-    stable_ticks = 3
+    interval = 0.1
+    stable_ticks = 2
     forget_after = 20
 
-    def __init__(self) -> None:
+    def __init__(self, tracker: "ScreenTracker") -> None:
         self._panes = None
+        self._tracker = tracker
 
     def reset(self) -> None:
         self._panes = None
@@ -695,7 +708,7 @@ class NoticeProbe(Probe):
         if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
             return None
         if self._panes is None:
-            self._panes = panes.PaneIndex(link, rescan_interval=8.0)
+            self._panes = self._tracker.pane_index(link)
         wanted = (PANE_NOTICE_TITLE, PANE_NOTICE_BODY, PANE_NOTICE_PROMPT)
         self._panes.ensure(wanted)
         body = self._panes.text(PANE_NOTICE_BODY)
@@ -756,7 +769,7 @@ class FileSelectProbe(Probe):
             return None
 
         if self._panes is None:
-            self._panes = panes.PaneIndex(link)
+            self._panes = self._tracker.pane_index(link)
         # One full sweep caches every slot's panes at once. Asking only for the
         # ones we want would rescan forever on empty slots, whose Flow and
         # Medals panes legitimately do not exist.
@@ -794,8 +807,9 @@ class FileSelectProbe(Probe):
 def build_probes() -> List[Probe]:
     # One tracker shared by the screen probes so they agree on where we are.
     tracker = ScreenTracker()
-    probes: List[Probe] = [GameIdentityProbe(), TitleScreenProbe(),
+    probes: List[Probe] = [GameIdentityProbe(), TitleScreenProbe(tracker),
                            GridCursorProbe(tracker), InfoCardProbe(tracker),
-                           FileSelectProbe(tracker), TutorialProbe(), ResultProbe(tracker), NoticeProbe()]
+                           FileSelectProbe(tracker), TutorialProbe(tracker), ResultProbe(tracker),
+                           NoticeProbe(tracker)]
     probes.extend(WatchProbe(w) for w in WATCHES)
     return probes
