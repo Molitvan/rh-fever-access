@@ -3,3 +3,4 @@ __pycache__/
 .scanstate.pkl
 candidates.txt
 tools/sweep_out/
+.deltavalues.npz
