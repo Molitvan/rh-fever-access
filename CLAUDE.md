@@ -24,9 +24,15 @@ cytolk, numpy; Pillow is needed for `tools/sweep.py`).
 ```
 python run.py                     # the companion; --no-speech for console only
 python tools/panes_dump.py        # every live text pane — start here for a new screen
+python tools/trace.py 300         # watch state + panes change; start before booting
 python tools/step.py auto 12 S W  # automated memory scan (see below)
 python tools/sweep.py             # drive the menu, log + screenshot each stop
 ```
+
+`trace.py` is the tool for "why is this screen silent": it logs the index, the
+committed-selection byte, the entry pointer and which panes appear and vanish,
+so a screen's signature can be read off directly instead of guessed. It is what
+turned up the `0x00` boot value below.
 
 Prefix anything that prints game text with `PYTHONIOENCODING=utf-8`. The game's
 strings are UTF-16BE and contain characters (`é`, `♂`) that crash the default
@@ -46,6 +52,7 @@ cp1252 console encoding.
 | `tools/scan.py` | Memory scanner core (numpy-vectorised, read-only) |
 | `tools/delta.py` | Filters scan candidates by *how much* they moved |
 | `tools/panes_dump.py` | Lists every live text pane — run this first for a new screen |
+| `tools/trace.py` | Records screen state + pane changes over time; start it before booting |
 | `tools/step.py` | One scan operation per invocation, state on disk |
 | `tools/pad.py` | Synthetic input + window capture |
 | `tools/sweep.py` | Menu walk producing a log plus screenshots |
@@ -71,17 +78,41 @@ because the user has no way to catch it. Concretely:
 Addresses in MEM1 (`0x80…`) have held across sessions. **Everything in MEM2
 (`0x90…`) is heap and moves** — locate it at runtime, never hardcode it.
 
-- `0x80320404` — game-select cursor index, u8, mirrored at `+1`. `0xFF` means
-  no valid selection.
-- `0x80320430` — pointer to the selected entry, array of `0x50`-byte structs.
+- `0x80320404` — game-select cursor index, u8. `0xFF` means no valid selection,
+  **but only once the menu exists** — see the boot value below.
+- `0x80320405` — **not a mirror**, despite looking like one. It holds the
+  *committed* selection: it agrees with the index while the cursor is on the
+  tower, and keeps the last entry when the index drops to `0xFF` for a card or
+  a game. It reads `0xFF` itself only when nothing is selected at all.
+- `0x80320430` — pointer to the selected item. Tower entries are a `0x50`-byte
+  array; the buttons beside it are separate objects. Either way `+0x04` is a
+  pointer to that item's NW4R pane, and the pane's ASCII name is at `+0xBC`.
 - `0x8032A5C0` — **do not use.** It looked like a screen ID, and is not; see below.
 
+**On a cold boot `0x80320404` reads `0x00`, not `0xFF`** — a perfectly valid
+entry number, while the menu does not exist and `0x80320430` is still null.
+Treating "not `0xFF`" as "the tower is up" is therefore wrong during boot, and
+it cost the project three screens: `TitleScreenProbe` and `FileSelectProbe`
+both latched themselves off permanently during the Wii logos, so the title
+screen and file select never spoke at all. Corroborate with the entry pointer.
+
 Screens are told apart by `ADDR_GRID_INDEX`: a valid entry number while moving
-around the tower, `0xFF` once the cursor is handed to a card, a game, or the
-file select. The card and the post-game screens both sit behind `0xFF`, so they
-are separated by *timing* — a card opens straight off the grid, an epilogue can
-only follow a game. That is a heuristic and is labelled as one in
-`ScreenTracker`.
+around the tower, `0xFF` once the cursor is handed to a card, a button, a game,
+or the file select. Everything behind `0xFF` needs a second signal:
+
+| screen | index | `+1` | entry pointer | text panes |
+| --- | --- | --- | --- | --- |
+| tower | 0–54 | = index | base + index·`0x50` | 45 |
+| button row | `0xFF` | `0xFF` | that button's object | 45 |
+| info card | `0xFF` | last index | the game's entry | 45 |
+| gameplay | `0xFF` | last index | the game's entry | 0, then a few |
+| title screen | `0xFF` or `0x00` | `0xFF` or `0x00` | sentinel, or null on boot | **0** |
+| file select | `0xFF` | `0xFF` | sentinel | 28 |
+
+The card and the post-game screens both sit behind `0xFF` with the pointer on
+the same entry, so they are separated by *timing* — a card opens straight off
+the grid, an epilogue can only follow a game. That is a heuristic and is
+labelled as one in `ScreenTracker`. Everything else above is structural.
 
 ## Reading on-screen text (start here for any new screen)
 
@@ -94,8 +125,46 @@ individual buffers, which is slow and yields addresses that move.
 the first thing to run when adding support for a new screen: it shows what the
 screen exposes and what the names are.
 
-**A pane keeps its last string after its screen closes**, and nothing in the pane
-indicates visibility. Always gate on game state.
+**A pane keeps its last string after its screen closes.** Never treat the
+presence of text as proof that it is on screen.
+
+**But the pane does say whether it is being drawn.** Its effective alpha sits
+three bytes ahead of its name (`panes.ALPHA_OFFSET`), reads `0` while the pane
+is not drawn, and ramps up as it fades in. `PaneIndex.visible()` wraps it.
+Verified on the café's dialogue box — `0x00` → `0x83` → `0xDC` opening, back to
+`0x00` closing, while the menu buttons beside it held `0xFF` throughout and a
+button that was not on screen held `0x00`.
+
+It rests at `0xDC` rather than `0xFF` on that box, so this is a **threshold**
+(`VISIBLE_ALPHA`), not an equality test, and it is briefly false at the start of
+a fade — which the engine's stability requirement absorbs.
+
+This is the general answer to "the pane is live but off screen", and it is
+better than any of the state gates around it. `CafeTalkProbe` relies on it
+entirely: the café keeps "Come back soon!" in its dialogue pane for as long as
+the café is open, and nothing else on that screen distinguishes the two.
+The info card's grid-index gate and the card-versus-epilogue timing heuristic
+both predate this and could likely be replaced by it.
+
+**Absence is usable evidence, but only via a full sweep.** `PaneIndex.live()`
+answers "was this pane there last sweep", and `scan()` drops what it no longer
+finds so that answer means something — freeing a layout leaves the ASCII name
+in the heap, and `address()` re-checks nothing else, so without the pruning a
+pane would read as present forever and `text()` would decode freed memory. The
+file select is identified this way: its own prompt live, and the game menu's
+`T_game_title_00` *not* live. Presence alone would not do — the menu keeps the
+file panes resident, so `T_no_data_00` still reads "Select one!" with the tower
+on screen.
+
+**Menu items are pane-backed, which is how the buttons are read.** The selected
+item's object at `ADDR_GRID_ENTRY_PTR` holds a pane pointer at `+0x04`, and
+that pane's name sits at `+0xBC`. Container panes are `N_…` and their text
+panes `T_…`, so `N_2play_btn_00` → `T_2play_btn_00` → "Two Player". This is the
+only way to name the button row: the cursor index reads `0xFF` for all of it,
+so there is no index to look a button up by. Tower entries are pane-backed too
+(`N_game_btn_13`, extras included) but have no matching `T_` pane — their names
+are artwork, which is why `EXTRAS` is hardcoded — and `TOWER_PANE` skips them
+rather than sweeping MEM2 for something that cannot exist.
 
 **A pane can also be live while off screen.** The info card's title and
 description track the highlighted game as you scroll the grid, with no card
@@ -105,7 +174,7 @@ screen. Gate on a property of the screen — for the card, `ADDR_GRID_INDEX ==
 
 Not every pane behaves that way: the Notice dialog's panes are *cleared* when it
 is down, so there, having text really is proof. Check which kind you have before
-deciding on a gate.
+deciding on a gate — or just use `visible()`, which does not care.
 
 **Pane names are case sensitive and the game reuses words.** `T_message_00` is
 the tutorial bubble; `T_Message_00` is the post-medal message. Different

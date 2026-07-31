@@ -32,6 +32,20 @@ NAME_PATTERN = re.compile(rb"T_[A-Za-z0-9_]{2,30}\x00")
 TEXT_POINTER_OFFSET = 0x1C
 MAX_TEXT_BYTES = 512
 
+# Effective alpha, in the pane's own header three bytes ahead of its name.
+# It is 0 while the pane is not being drawn and ramps up as it fades in, so it
+# answers the question the rest of this module cannot: not "does this pane
+# exist" but "is the player actually looking at it".
+#
+# Verified on the cafe's dialogue box, which fades 0x00 -> 0x83 -> 0xDC as it
+# opens and back to 0x00 as it closes, while the menu buttons beside it sit at
+# 0xFF throughout and a hidden button sits at 0x00.
+ALPHA_OFFSET = -3
+
+# It settles at 0xDC on that dialogue box rather than 0xFF, so this is a
+# threshold and not an equality test. Well clear of a fade's early frames.
+VISIBLE_ALPHA = 0x40
+
 # Private-use glyphs stand in for controller buttons in the game's font.
 BUTTON_GLYPHS = {
     "": "A",   # A button
@@ -66,6 +80,17 @@ class PaneIndex:
         self._addresses.pop(name, None)
         return None
 
+    def live(self, name: str) -> bool:
+        """True if the pane existed at the last full sweep and still validates.
+
+        The absence of a pane is a usable signal — the file select can be told
+        from the game menu by the menu's card panes being gone — but only
+        because `scan()` drops what it no longer finds. Without that, this
+        would answer "yes" forever: freeing a layout leaves the ASCII name
+        lying in the heap, and `address()` re-checks nothing else.
+        """
+        return self.address(name) is not None
+
     def text(self, name: str) -> Optional[str]:
         addr = self.address(name)
         if addr is None:
@@ -87,6 +112,25 @@ class PaneIndex:
             return None
         text = clean(decoded)
         return text or None
+
+    def alpha(self, name: str) -> Optional[int]:
+        """The pane's effective alpha, or None if it cannot be read."""
+        addr = self.address(name)
+        if addr is None:
+            return None
+        data = self._link.read(addr + ALPHA_OFFSET, 1)
+        return None if data is None else data[0]
+
+    def visible(self, name: str, threshold: int = VISIBLE_ALPHA) -> bool:
+        """True if the pane is actually on screen, not merely resident.
+
+        Stronger than `live()`, and the right gate whenever a screen leaves its
+        panes behind holding the last thing they showed — which most of them
+        do. Being a threshold on a fade, it is briefly false at the start of an
+        appearance; the engine's stability requirement covers that.
+        """
+        value = self.alpha(name)
+        return value is not None and value >= threshold
 
     def _name_at(self, addr: int) -> Optional[str]:
         raw = self._link.read(addr, 34)
@@ -151,5 +195,13 @@ class PaneIndex:
             tail_addr = addr + len(block) - 34
             addr += CHUNK
 
-        self._addresses.update(found)
+        if targets is None:
+            # An unfiltered sweep saw everything there is, so it is allowed to
+            # forget. A pane that has gone was freed with its layout, and
+            # keeping its address would let text() decode whatever now sits in
+            # that heap — the name survives the free, so address() alone cannot
+            # notice. Callers depend on this to use absence as evidence.
+            self._addresses = dict(found)
+        else:
+            self._addresses.update(found)
         return found

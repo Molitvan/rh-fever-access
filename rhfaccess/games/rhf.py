@@ -14,6 +14,7 @@ first.
 
 from __future__ import annotations
 
+import re
 import time
 
 from typing import Callable, Dict, Hashable, Iterable, List, Optional
@@ -193,6 +194,88 @@ PANE_FILE_MEDALS = "T_medal_num_0{}"
 
 INVALID_INDEX = 0xFF
 MAX_NAME_LENGTH = 32
+
+
+# Everything selectable in the game menu — the tower entries and the row of
+# buttons beside it — is backed by an NW4R pane, and ADDR_GRID_ENTRY_PTR points
+# at the selected one's object whichever kind it is. The object holds a pointer
+# to its pane at +0x04, and the pane carries its own ASCII name at +0xBC.
+#
+# This is what makes the buttons readable. The cursor index only covers the
+# tower, and reads 0xFF the moment the cursor steps off it, so there is no
+# index to look a button up by; the pointer, however, still moves.
+SELECTION_PANE_OFFSET = 0x04
+PANE_NAME_OFFSET = 0xBC
+MAX_PANE_NAME = 32
+
+# Container panes are "N_...", their text panes "T_..." — the button labelled
+# "Two Player" is N_2play_btn_00 holding T_2play_btn_00.
+CONTAINER_PANE = re.compile(r"^N_([A-Za-z0-9_]{2,28})$")
+
+# The tower's own entries are panes too (N_game_btn_13), the three extras
+# included. None of them has a matching text pane, because the game draws those
+# names as artwork — which is the reason EXTRAS is hardcoded. Asking for one
+# anyway would sweep MEM2 every few seconds looking for something that cannot
+# exist, so they are recognised and skipped rather than merely failing.
+TOWER_PANE = re.compile(r"^N_game_btn_\d+$")
+
+
+def selected_pane_name(link) -> Optional[str]:
+    """ASCII name of the pane behind the current menu selection, or None."""
+    entry = link.pointer(ADDR_GRID_ENTRY_PTR)
+    if entry is None:
+        return None
+    pane = link.pointer(entry + SELECTION_PANE_OFFSET)
+    if pane is None:
+        return None
+    raw = link.read(pane + PANE_NAME_OFFSET, MAX_PANE_NAME)
+    if not raw:
+        return None
+    end = raw.find(b"\x00")
+    if end <= 0:
+        return None
+    try:
+        return raw[:end].decode("ascii", errors="strict")
+    except UnicodeDecodeError:
+        return None
+
+
+def selected_button_pane(link) -> Optional[str]:
+    """Text pane holding the label of the selected *button*, or None.
+
+    None whenever the selection is a tower entry, which is what keeps this
+    apart from the info card: the card sits behind the same 0xFF index with the
+    pointer still on the game you picked.
+    """
+    name = selected_pane_name(link)
+    if name is None or TOWER_PANE.match(name):
+        return None
+    match = CONTAINER_PANE.match(name)
+    if match is None:
+        return None
+    return "T_" + match.group(1)
+
+
+def no_selection(link) -> bool:
+    """True when nothing on the game grid is or was being played.
+
+    Needed because "no text panes on screen" describes the title screen *and*
+    a game in progress, so it cannot tell them apart on its own. The grid
+    state can:
+
+      * before the menu has ever been built, the entry pointer is null —
+        this is the cold boot, where the index byte reads 0x00 rather than
+        0xFF and so looks like a real selection;
+      * after backing out of the menu, the pointer holds the game's
+        no-selection sentinel and the committed-selection byte reads 0xFF;
+      * during a game, both still refer to the entry you launched.
+
+    So the first two are the title screen and the third is not.
+    """
+    entry = link.pointer(ADDR_GRID_ENTRY_PTR)
+    if entry is None:
+        return True
+    return link.u8(ADDR_GRID_INDEX + 1) == INVALID_INDEX
 
 # Third pane on the info card: the game's own control hint, e.g.
 # "A: Play!  B: Go back." Preferred over writing our own.
@@ -405,15 +488,22 @@ class GridCursorProbe(Probe):
 
     def read(self, link) -> Optional[Hashable]:
         index = link.u8(ADDR_GRID_INDEX)
-        self._tracker.note_grid(index is not None and index != INVALID_INDEX)
-        if index is None or index == INVALID_INDEX:
-            return None
-        # The byte is mirrored; if the copies disagree we caught a partial write.
-        if link.u8(ADDR_GRID_INDEX + 1) != index:
-            return None
         entry = link.pointer(ADDR_GRID_ENTRY_PTR)
-        if entry is None:
+        # A valid-looking index is not enough to call the grid active, and the
+        # tracker must not be told otherwise: on a cold boot this byte reads
+        # 0x00 — a real entry number — while the menu does not exist and the
+        # entry pointer is still null. Taken at face value that told the card
+        # and epilogue probes the grid had just been on screen, seconds before
+        # the title screen had even appeared.
+        #
+        # The byte at +1 is the committed selection, not a mirror of the
+        # index. The two agree only while the cursor is on the tower, which is
+        # exactly the agreement being tested for here.
+        if (index is None or index == INVALID_INDEX or entry is None
+                or link.u8(ADDR_GRID_INDEX + 1) != index):
+            self._tracker.note_grid(False)
             return None
+        self._tracker.note_grid(True)
 
         # Entries sit in one array, so the selected pointer and the index must
         # agree: entry == base + index * stride. The base is whatever the heap
@@ -429,8 +519,10 @@ class GridCursorProbe(Probe):
         if label is None:
             return None
 
-        # Coming back from a game's info card is not a fresh arrival.
-        visit = self._tracker.enter("grid", quiet_from=("card",))
+        # Coming back from a game's info card or from the button row beside the
+        # tower is not a fresh arrival — you never left the game menu, so the
+        # orientation line would only be in the way.
+        visit = self._tracker.enter("grid", quiet_from=("card", "button"))
         self._intro.update(visit)
         return (visit, index, label, set_of(index))
 
@@ -450,6 +542,57 @@ class GridCursorProbe(Probe):
         self._last_set = current_set
 
         return _with_intro(intro, label, priority=5)
+
+
+class MenuButtonProbe(Probe):
+    """Speaks the game menu's buttons: Two Player, Back, and the rest of the row.
+
+    These are not on the tower, so the cursor index cannot name them — it reads
+    0xFF for the whole row, the same value it reads for the info card and for a
+    game in progress. What separates them is the selection pointer, which moves
+    to the button's own object and from there to a pane whose name gives away
+    which button it is.
+
+    The label itself is the game's: N_2play_btn_00 -> T_2play_btn_00 -> "Two
+    Player". Nothing is hardcoded, so this covers whatever else lives in that
+    row and works in any region.
+    """
+
+    name = "menu_button"
+    interval = 0.05
+    # Same reasoning as the grid cursor: confirm over 0.2s so the row's open
+    # and close animations cannot trigger it, and forget quickly enough that
+    # coming back to a button announces it again.
+    stable_ticks = 4
+    forget_after = 20
+
+    def __init__(self, tracker: "ScreenTracker") -> None:
+        self._panes = None
+        self._tracker = tracker
+
+    def reset(self) -> None:
+        self._panes = None
+
+    def read(self, link) -> Optional[Hashable]:
+        # A live index means the cursor is on the tower, which belongs to
+        # GridCursorProbe.
+        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            return None
+        pane = selected_button_pane(link)
+        if pane is None:
+            return None
+        if self._panes is None:
+            self._panes = self._tracker.pane_index(link)
+        self._panes.ensure([pane])
+        text = self._panes.text(pane)
+        if not text:
+            return None
+        self._tracker.enter("button", quiet_from=("grid",))
+        return (pane, text)
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        _pane, text = current
+        return [Utterance(text, interrupt=True, priority=5)]
 
 
 class InfoCardProbe(Probe):
@@ -480,6 +623,13 @@ class InfoCardProbe(Probe):
         # card's title and description in step with the highlighted game while
         # you scroll, so those change constantly with no card on screen.
         if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            return None
+        # Stepping off the tower onto the button row also drops the index to
+        # 0xFF, straight from the grid, so the timing test below cannot rule it
+        # out — and the card's panes still hold the last game you highlighted.
+        # The selection pointer can rule it out: on a button it resolves to
+        # that button's pane, and on a card it is still the game's entry.
+        if selected_button_pane(link) is not None:
             return None
         # A card opens straight off the grid. If the grid has not been active
         # for seconds we are somewhere else behind a 0xFF index — in a game, or
@@ -521,13 +671,25 @@ TITLE_ANNOUNCEMENT = ("Rhythm Heaven Fever, title screen. "
 class TitleScreenProbe(Probe):
     """Announces the title screen, detected by it having no text panes at all.
 
-    Every other screen seen so far exposes at least twenty. The check is a full
-    MEM2 sweep, so it is rate-limited and switches itself off permanently as
-    soon as any other screen appears — it only ever runs during the few seconds
-    the title screen is up.
+    Every other menu screen exposes at least twenty — but a game in progress
+    exposes none either, so the sweep alone cannot tell those two apart.
+    `no_selection()` does: during a game the grid still points at the entry you
+    launched, and on the title screen nothing is selected.
 
-    UNVERIFIED: the boot logos presumably also have no text panes. If this
-    announces too early, gate it on something else.
+    This used to switch itself off for good the first time the grid index read
+    anything but 0xFF. On a cold boot that byte reads 0x00, so it switched off
+    during the Wii logos and the title screen was never announced at all — nor
+    was it on any later visit, since the flag was only cleared by a Dolphin
+    disconnect. Whatever replaces that flag has to survive going back to the
+    title screen from the menu, which is a thing players do.
+
+    The sweep is expensive, so it is rate-limited and only ever runs once the
+    cheap check above has already passed — which it does not during a game or
+    anywhere in the menu.
+
+    UNVERIFIED: the boot logos have no text panes and no selection either, so
+    this announces during them, a few seconds before the title screen is
+    actually up. That is the pre-existing compromise, now reached sooner.
     """
 
     name = "title_screen"
@@ -537,19 +699,14 @@ class TitleScreenProbe(Probe):
     def __init__(self, tracker: "ScreenTracker") -> None:
         self._panes = None
         self._tracker = tracker
-        self._done = False
         self._next_scan = 0.0
 
     def reset(self) -> None:
         self._panes = None
-        self._done = False
         self._next_scan = 0.0
 
     def read(self, link) -> Optional[Hashable]:
-        if self._done:
-            return None
-        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
-            self._done = True
+        if not no_selection(link):
             return None
 
         now = time.monotonic()
@@ -560,8 +717,8 @@ class TitleScreenProbe(Probe):
         if self._panes is None:
             self._panes = self._tracker.pane_index(link)
         if self._panes.scan():
-            self._done = True      # some other screen is up; stop sweeping
-            return None
+            return None            # some other screen is up
+        self._tracker.enter("title")
         return ("title",)
 
     def describe(self, previous, current) -> Iterable[Utterance]:
@@ -723,6 +880,81 @@ class NoticeProbe(Probe):
         return [Utterance(text, interrupt=True, priority=9)]
 
 
+# The cafe's dialogue box. One pane, replaced line by line as the conversation
+# is advanced, so speaking on change follows the whole exchange — the same shape
+# as the tutorial bubbles.
+#
+# It keeps its last line after the conversation ends, sitting on the cafe menu
+# reading "Come back soon!", so presence is not proof it is on screen. Its alpha
+# is: 0 while it is down, ramping up as it opens.
+PANE_CAFE_TALK = "T_talk_msg_00"
+
+# The cafe menu's own options: Talk to Barista, Listen to Music, Read
+# Something, Rhythm Test, Back. Read for their labels only — which one is
+# highlighted lives somewhere not yet found, so they are not announced yet.
+PANE_CAFE_MENU = tuple(f"T_menu_btn_0{i}" for i in range(5))
+
+
+class CafeTalkProbe(Probe):
+    """Reads what the barista says.
+
+    Gated on the dialogue box being *drawn*, not merely resident: the pane
+    keeps its last line for as long as the cafe is open, so anything weaker
+    would announce "Come back soon!" on arriving at the cafe menu, before the
+    barista had said anything.
+    """
+
+    name = "cafe_talk"
+    interval = 0.1
+    # The box fades in over ~0.3s and the text is already in place when it
+    # starts, so confirm across a few polls rather than speaking mid-fade.
+    stable_ticks = 3
+    forget_after = 40
+
+    def __init__(self, tracker: "ScreenTracker") -> None:
+        self._panes = None
+        self._tracker = tracker
+        self._conversation = 0
+        self._open = False
+
+    def reset(self) -> None:
+        self._panes = None
+        self._conversation = 0
+        self._open = False
+
+    def read(self, link) -> Optional[Hashable]:
+        if self._panes is None:
+            self._panes = self._tracker.pane_index(link)
+        self._panes.ensure([PANE_CAFE_TALK])
+        if not self._panes.visible(PANE_CAFE_TALK):
+            self._open = False
+            return None
+        text = self._panes.text(PANE_CAFE_TALK)
+        if not text:
+            return None
+
+        # Count conversations, and make the count part of the snapshot, so the
+        # same line spoken in a later one is a change and gets announced. It
+        # otherwise would not: when the barista has nothing new they repeat a
+        # stock line, which is the line you hear most often, and relying on the
+        # engine to have forgotten it means it is silent whenever you talk
+        # again within a few seconds.
+        #
+        # Safe against a flicker re-announcing the current line only because
+        # the box does not dip while a conversation is running — traced at
+        # 0.1s across a whole exchange, the alpha held steady through every
+        # line change and only fell at the end.
+        if not self._open:
+            self._open = True
+            self._conversation += 1
+        self._tracker.enter("cafe")
+        return (self._conversation, text)
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        _conversation, text = current
+        return [Utterance(text, interrupt=True, priority=7)]
+
+
 class FileSelectProbe(Probe):
     """Speaks the highlighted save slot on the file select screen.
 
@@ -730,7 +962,17 @@ class FileSelectProbe(Probe):
     panes, and a slot without them is an empty "New Game" box. The empty label
     is ours — the game draws those words as artwork, not text.
 
-    Gated on the game grid being inactive, so it stays quiet once play starts.
+    Told apart from the game menu by which panes exist. Its own prompt pane
+    has to be live, and the menu's card title must not be: the file select
+    tears the menu's layout down, while the menu keeps the file panes resident
+    (`T_no_data_00` still reads "Select one!" with the tower on screen), so
+    presence alone proves nothing and absence is the half that does.
+
+    This used to latch itself off for good the first time the grid index read
+    anything but 0xFF, on the grounds that the file select only appears once
+    per boot. It appears again whenever you go back to the title screen — and
+    worse, the byte reads 0x00 on a cold boot, so the latch fired during the
+    Wii logos and this screen never spoke at all.
     """
 
     name = "file_select"
@@ -742,42 +984,34 @@ class FileSelectProbe(Probe):
 
     def __init__(self, tracker: "ScreenTracker") -> None:
         self._panes = None
-        self._scanned = False
         self._tracker = tracker
         self._intro = _IntroState()
         self._slots = {}
-        self._finished = False
 
     def reset(self) -> None:
         self._panes = None
-        self._scanned = False
         self._intro = _IntroState()
         self._slots = {}
-        self._finished = False
 
     def read(self, link) -> Optional[Hashable]:
-        if self._finished:
-            return None
-        # A valid grid index means we are in the game tower. The file select
-        # only ever appears once, before that, so once the tower is up this
-        # screen is gone for good and must never speak again.
-        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
-            self._finished = True
-            return None
         slot = link.u8(ADDR_FILE_SLOT)
-        if slot is None or slot >= FILE_SLOT_COUNT:
-            return None
-
         if self._panes is None:
             self._panes = self._tracker.pane_index(link)
-        # One full sweep caches every slot's panes at once. Asking only for the
-        # ones we want would rescan forever on empty slots, whose Flow and
-        # Medals panes legitimately do not exist.
-        if not self._panes.ensure([PANE_FILE_PROMPT]):
+        # One unfiltered sweep caches every slot's panes at once, and asking
+        # for the prompt is what triggers it. Asking for the Flow and Medals
+        # panes instead would rescan forever on empty slots, whose panes
+        # legitimately do not exist.
+        self._panes.ensure([PANE_FILE_PROMPT])
+        if self._panes.live(PANE_CARD_TITLE):
+            # Definitely in the game menu. Drop what we learned about the
+            # slots: the save is edited by playing, so the numbers we cached
+            # last time are not the numbers this screen will show next time.
+            self._slots = {}
             return None
-        if not self._scanned:
-            self._panes.scan()
-            self._scanned = True
+        if not self._panes.live(PANE_FILE_PROMPT):
+            return None
+        if slot is None or slot >= FILE_SLOT_COUNT:
+            return None
 
         flow = self._panes.text(PANE_FILE_FLOW.format(slot))
         medals = self._panes.text(PANE_FILE_MEDALS.format(slot))
@@ -808,8 +1042,9 @@ def build_probes() -> List[Probe]:
     # One tracker shared by the screen probes so they agree on where we are.
     tracker = ScreenTracker()
     probes: List[Probe] = [GameIdentityProbe(), TitleScreenProbe(tracker),
-                           GridCursorProbe(tracker), InfoCardProbe(tracker),
+                           GridCursorProbe(tracker), MenuButtonProbe(tracker),
+                           InfoCardProbe(tracker),
                            FileSelectProbe(tracker), TutorialProbe(tracker), ResultProbe(tracker),
-                           NoticeProbe(tracker)]
+                           NoticeProbe(tracker), CafeTalkProbe(tracker)]
     probes.extend(WatchProbe(w) for w in WATCHES)
     return probes

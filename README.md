@@ -23,6 +23,10 @@ Working today:
   only text the game shows once a game begins.
 - **Set changes** — left/right jump a whole set, so those announce *"Set 2. Fork
   Lifter"*; moving within a set just names the game.
+- **The game menu's buttons** — *"Two Player"*, *"Back"* (the option that leaves
+  for the title screen). These are not on the tower, so the cursor index cannot
+  reach them; they are read from the selected item's own pane instead (see
+  below), which means the labels are the game's rather than ours.
 - **Post-game epilogue** — *"Scientific Findings. They sure were lively little
   creatures! ...And their color trails were so vibrant!"*
 - **Perfect rewards** — *"'Figure Fighter' You've earned a gift! Listen to it at the
@@ -36,6 +40,10 @@ Working today:
   `T_title_spot_00` / `T_window_00` / `T_win_msg_sub_00`, which the game clears
   when the dialog is down — so unlike the card's panes, having text is itself a
   reliable signal)
+- **Café barista** — the whole conversation, line by line: *"Recently, a friend let
+  me mess around a bit on his guitar."* … *"See you around."* One pane replaced per
+  line, gated on the dialogue box's alpha so the line it keeps afterwards is not
+  read out again when you are just standing in the café.
 - **Title screen** — an authored prompt (see below), because the screen has no text.
 
 ### Telling the info card apart from the epilogue
@@ -72,6 +80,14 @@ card displayed — the game is preloading them. Reading them on change therefore
 announced a description for every cursor move. Pane text is what the game *would*
 draw, not proof that it is drawing it.
 
+**The pane does, however, carry its alpha**, three bytes ahead of its name, and it
+reads 0 whenever the pane is not being drawn. `PaneIndex.visible()` is the general
+answer to the problem above, and it is what makes the café barista readable: that
+dialogue box keeps its last line for as long as the café is open, and no other
+property of the screen distinguishes "the barista is speaking" from "the barista
+said that a minute ago". Found by comparing the café's menu buttons against its
+closed dialogue box, then watching the box fade in and out.
+
 The card is gated on the grid index instead: it holds a valid entry number while you
 move around the tower and `0xFF` once the cursor is handed to the card. That is a
 property of the screen rather than of the text, which is what makes it trustworthy.
@@ -80,13 +96,46 @@ property of the screen rather than of the text, which is what makes it trustwort
 
 | What | Where | How it was confirmed |
 | --- | --- | --- |
-| Game-select cursor index | `0x80320404` (u8, mirrored at `+1`) | Automated return-to-origin scan; walks ±1 per press, `0xFF` when invalid |
+| Game-select cursor index | `0x80320404` (u8) | Automated return-to-origin scan; walks ±1 per press, `0xFF` when invalid — but `0x00` on a cold boot, see below |
+| Committed selection | `0x80320405` (u8) | *Not* a mirror of the index, though it matches while on the tower. Live trace: index went `0xFF` on launching a game while this held the entry number |
 | Selected entry object | `0x80320430` → MEM2, 0x50-byte stride | Pointer moves exactly one stride per press |
+| Selected item's pane | entry `+0x04` → pane, name at `+0xBC` | Read as `N_2play_btn_00` / `N_back_btn_00` on the two buttons, `N_game_btn_13` on the tower |
 | Text archive (`DAT1`) | located at runtime | 292 records; index 1 = "Title Screen", 104 = "Hole in One" |
 | ~~Menu state~~ `0x8032A5C0` | **do not use** | Looked like 1 = grid / 3 = card when found by driving Z/X. A live trace while scrolling showed it reading 3 throughout. Not a screen ID |
 | File slot index | `0x90DEBB71` (u8) | 0-3 over the 2x2 slot grid; survived a full game reboot at the same address |
 | Layout text panes | located by name at runtime | pointer at name + `0x1C`; verified against the on-screen card |
 | MEM2 access | `rhfaccess/rawmem.py` | dolphin-memory-engine cannot read MEM2 on current Dolphin builds |
+
+### The boot value that broke three screens
+
+`0x80320404` reads **`0x00` on a cold boot** — a valid entry number — while the
+menu does not exist and `0x80320430` is still null. `TitleScreenProbe` and
+`FileSelectProbe` both treated "not `0xFF`" as "the tower is up" and switched
+themselves off *permanently* on the first tick, during the Wii logos, so the
+title screen and the file select never spoke at all. Nor did they on any later
+visit: the flags were cleared only by a Dolphin disconnect, and both screens
+come back if you leave the menu by its Back button.
+
+Both latches are gone. The title screen is now separated from a game in
+progress — which also has zero text panes — by `no_selection()`, and the file
+select from the game menu by which panes are live. Neither screen is
+once-per-boot, and nothing assumes it is.
+
+### Reading the button row
+
+The cursor index only covers the tower. Step onto Two Player or Back and it
+reads `0xFF`, the same value the info card and gameplay use, so there is no
+index to name a button by. The selection *pointer* still moves, though, and
+every menu item is backed by an NW4R pane: `0x80320430` → object, `+0x04` →
+pane, `+0xBC` → its ASCII name. Container panes are `N_…` and their text panes
+`T_…`, so `N_2play_btn_00` becomes `T_2play_btn_00` and the game supplies the
+words — "Two Player". Nothing hardcoded, and it should hold in any region.
+
+Tower entries are pane-backed too (`N_game_btn_13`, and the extras at
+`N_game_btn_50`–`52`), but no `T_game_btn_*` exists — the game draws those names
+as artwork, which is exactly why `EXTRAS` is three hardcoded strings. That
+absence is also what keeps the info card apart from a button: the card sits
+behind the same `0xFF` index with the pointer still on the game you picked.
 
 ### Menu layout
 
@@ -142,13 +191,45 @@ the description buffer, the file-select panes and the slot index all reappeared 
 directly, with validation — though locating by pane name or archive magic is still
 preferred where possible.
 
+### Not done yet — the café's menu options
+
+The barista speaks; the four options next to him do not. Their labels are read
+easily enough (`T_menu_btn_00`–`03`: Talk to Barista, Listen to Music, Read
+Something, Rhythm Test — `T_menu_btn_04` "Back" sits at alpha 0 and is not on
+screen), but nothing yet says **which one is highlighted**.
+
+What has been ruled out:
+
+- **The selection pointer.** `ADDR_GRID_ENTRY_PTR` is stale in the café — it
+  still points at the tower's café entry (`N_game_btn_50`), so the trick that
+  names the game menu's buttons does not apply here.
+- **Pane alpha.** All four options read `0xFF`; the highlight is not a pane
+  being shown and hidden.
+- **A hand-rolled two-position memory diff.** It produced six plausible bytes
+  that all turned out to be drift — they read 0 and 2 at the two positions,
+  then wandered to unrelated values on their own and did not move with the
+  cursor. Exactly the failure mode the automated scan exists to prevent; do not
+  repeat it.
+
+Where it stands: `tools/step.py auto 12 S W 0.5 --mem2` converged 92,274,688
+candidates to **171**, stable from cycle 8, so the cursor is certainly in there.
+Most survivors are the highlight's colour rather than its position — they repeat
+`133, 30, 184`, an RGB triple. The next step is to walk the highlight through all
+four options and keep only a candidate that reads `0, 1, 2, 3`, or takes four
+distinct values under some other encoding.
+
+Fallback if no such byte exists: exactly one button is tinted at a time, so
+"which option is highlighted" is answerable from those colour bytes via the pane
+machinery already in place — uglier, but it needs no new address.
+
 ### Provisional — do not trust yet
 
-- **Rows 4–10 are unverified.** Confirmed against the on-screen banner: the extras
-  (idx 1 = "Rhythm Toys"), all of row 1, row 2 (idx 11 = "Tambourine") and row 3
-  (idx 19 = "Remix 3", with the Air Rally badminton icon sitting at idx 17 as
-  predicted). Rows 4–10 follow from the archive's structure but are still locked in
-  the save file, so they have not been seen on screen.
+- ~~Rows 4–10 are unverified.~~ **Now verified.** The info card's title pane
+  tracks the highlighted entry live, which is better evidence than a screenshot
+  and needs no window resizing: idx 33 → archive 127 → `label_for()` says "Love
+  Rap" and `T_game_title_00` reads "Love Rap". Spot-checked across sets 2–6 in a
+  live run (Micro-Row, Flipper-Flop, Donk-Donk, Bossa Nova, Exhibition Match,
+  Packing Pests) with the card and the cursor agreeing throughout.
 - **Locked entries say nothing.** Indices 3–4 are the "?" placeholders. Whether the
   game has a name for a locked row's entries is unknown.
 - **The extras labels are English, from the US build.** The games are language-neutral
