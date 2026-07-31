@@ -667,6 +667,49 @@ class ResultProbe(Probe):
         return [Utterance(text, interrupt=True, priority=8)]
 
 
+# The "Notice!" dialog offering a Perfect attempt:
+#   Notice! / "If you get a Perfect on Micro-Row right now, you'll receive its
+#   music, also titled 'Micro-Row.'" / Press A!
+# Unlike the info card's panes, these are cleared when the dialog is not up, so
+# having text is itself a reliable signal that it is on screen.
+PANE_NOTICE_TITLE = "T_title_spot_00"
+PANE_NOTICE_BODY = "T_window_00"
+PANE_NOTICE_PROMPT = "T_win_msg_sub_00"
+
+
+class NoticeProbe(Probe):
+    """Reads the Notice dialog, e.g. the offer of a Perfect attempt."""
+
+    name = "notice"
+    interval = 0.15
+    stable_ticks = 3
+    forget_after = 20
+
+    def __init__(self) -> None:
+        self._panes = None
+
+    def reset(self) -> None:
+        self._panes = None
+
+    def read(self, link) -> Optional[Hashable]:
+        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            return None
+        if self._panes is None:
+            self._panes = panes.PaneIndex(link, rescan_interval=8.0)
+        wanted = (PANE_NOTICE_TITLE, PANE_NOTICE_BODY, PANE_NOTICE_PROMPT)
+        self._panes.ensure(wanted)
+        body = self._panes.text(PANE_NOTICE_BODY)
+        if not body:
+            return None
+        title = self._panes.text(PANE_NOTICE_TITLE) or ""
+        prompt = self._panes.text(PANE_NOTICE_PROMPT) or ""
+        return (title, body, prompt)
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        text = " ".join(part for part in current if part)
+        return [Utterance(text, interrupt=True, priority=9)]
+
+
 class FileSelectProbe(Probe):
     """Speaks the highlighted save slot on the file select screen.
 
@@ -753,6 +796,6 @@ def build_probes() -> List[Probe]:
     tracker = ScreenTracker()
     probes: List[Probe] = [GameIdentityProbe(), TitleScreenProbe(),
                            GridCursorProbe(tracker), InfoCardProbe(tracker),
-                           FileSelectProbe(tracker), TutorialProbe(), ResultProbe(tracker)]
+                           FileSelectProbe(tracker), TutorialProbe(), ResultProbe(tracker), NoticeProbe()]
     probes.extend(WatchProbe(w) for w in WATCHES)
     return probes

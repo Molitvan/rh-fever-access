@@ -31,6 +31,11 @@ Working today:
 - **Post-medal message** — *"Thanks, mister! You're the best!"* (pane
   `T_Message_00` — capital M, a different pane from the tutorial's lowercase
   `T_message_00`; the game's pane names are case sensitive)
+- **Perfect-attempt notice** — *"Notice! If you get a Perfect on Micro-Row right
+  now, you'll receive its music, also titled 'Micro-Row.' Press A!"* (panes
+  `T_title_spot_00` / `T_window_00` / `T_win_msg_sub_00`, which the game clears
+  when the dialog is down — so unlike the card's panes, having text is itself a
+  reliable signal)
 - **Title screen** — an authored prompt (see below), because the screen has no text.
 
 ### Telling the info card apart from the epilogue
