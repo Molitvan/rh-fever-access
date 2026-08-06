@@ -23,6 +23,7 @@ cytolk, numpy; Pillow is needed for `tools/sweep.py`).
 
 ```
 python run.py                     # the companion; --no-speech for console only
+python tools/diag.py              # can it see the game at all? run this first when wrong
 python tools/panes_dump.py        # every live text pane — start here for a new screen
 python tools/trace.py 300         # watch state + panes change; start before booting
 python tools/step.py auto 12 S W  # automated memory scan (see below)
@@ -49,6 +50,7 @@ cp1252 console encoding.
 | `rhfaccess/games/archive.py` | Runtime locator for the game's DAT1 text archives |
 | `rhfaccess/games/panes.py` | Reads on-screen text by NW4R layout pane name |
 | `rhfaccess/games/rhf.py` | All RHF specifics: addresses, menu layout, probes |
+| `tools/diag.py` | Health check: is MEM2 readable, is the archive there. Run first |
 | `tools/scan.py` | Memory scanner core (numpy-vectorised, read-only) |
 | `tools/delta.py` | Filters scan candidates by *how much* they moved |
 | `tools/panes_dump.py` | Lists every live text pane — run this first for a new screen |
@@ -146,7 +148,15 @@ the café is open, and nothing else on that screen distinguishes the two.
 The info card's grid-index gate and the card-versus-epilogue timing heuristic
 both predate this and could likely be replaced by it.
 
-**Absence is usable evidence, but only via a full sweep.** `PaneIndex.live()`
+**Absence is usable evidence, but only via a full sweep *that succeeded*.**
+`scan()` returns `None` — not `{}` — when it could not read MEM2, and callers
+must tell those apart. "No panes" is what identifies the title screen, so a
+sweep that merely failed must never be allowed to look like one; when it was,
+the companion announced the title screen over the button row, the info card and
+the café, and went silent everywhere text is read. `None` means unverified and
+the sweep neither forgets nor reports a count.
+
+`PaneIndex.live()`
 answers "was this pane there last sweep", and `scan()` drops what it no longer
 finds so that answer means something — freeing a layout leaves the ASCII name
 in the heap, and `address()` re-checks nothing else, so without the pruning a
@@ -208,6 +218,21 @@ the archive structure but are locked in the save and unconfirmed.
   read into `0x90000000+` throws. `rawmem.py` locates the emulated memory in the
   host process and `DolphinLink` falls back to it transparently. Do not
   "fix" this by dropping MEM2 support — most of the game's state is there.
+- **Losing MEM2 does not look like losing MEM2.** The raw backend goes stale
+  whenever Dolphin remaps its arena — restarting the game is enough — and the
+  handle stays open, so nothing reports a disconnect. MEM1 keeps working through
+  dme, so the companion still hooks, still names the game and still walks the
+  tower over the hardcoded `EXTRAS`, while every game name (archive, MEM2) and
+  every screen that reads text (panes, MEM2) goes quiet. **That combination —
+  "Rhythm Café" and "Rhythm Toys" speak but no game does, plus the title screen
+  announced over other screens — is the signature, and it is a memory fault, not
+  a menu bug.** `tools/diag.py` tells them apart in one command. The link now
+  re-attaches on its own and `app.py` says so out loud, but the failure is worth
+  recognising because it will come back in a new shape.
+- **Anything caching an address must survive a re-attach.** `DolphinLink.generation`
+  is bumped on every attach; `PaneIndex` clears itself when it changes. An
+  address learned before a remap describes memory that is no longer the game,
+  and re-reading the ASCII name at it is not enough of a check to catch that.
 - **Run only one `run.py`.** Instances speak independently, and one started
   before a code change keeps announcing the old behaviour. Duplicate speech is
   almost always a stray process, not a logic bug.

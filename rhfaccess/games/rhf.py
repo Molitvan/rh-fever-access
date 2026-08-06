@@ -467,22 +467,35 @@ class GridCursorProbe(Probe):
     stable_ticks = 4
     forget_after = 20
 
+    # Locating the archive is a full MEM2 sweep. A successful one is cached and
+    # costs nothing thereafter, but a failed one caches nothing, so without this
+    # the sweep ran on every poll — twenty times a second — for as long as the
+    # lookup kept failing. That is more than enough to stall the loop and put
+    # speech seconds behind the screen.
+    ARCHIVE_RETRY_SECONDS = 2.0
+
     def __init__(self, tracker: "ScreenTracker") -> None:
         self._archive = None
         self._entry_base = None
         self._tracker = tracker
         self._intro = _IntroState()
         self._last_set = None
+        self._next_archive_scan = 0.0
 
     def reset(self) -> None:
         self._archive = None
         self._entry_base = None
         self._intro = _IntroState()
         self._last_set = None
+        self._next_archive_scan = 0.0
 
     def _text_archive(self, link):
         if self._archive is not None and self._archive.still_valid():
             return self._archive
+        now = time.monotonic()
+        if now < self._next_archive_scan:
+            return None
+        self._next_archive_scan = now + self.ARCHIVE_RETRY_SECONDS
         self._archive = archive.find(link)
         return self._archive
 
@@ -716,8 +729,14 @@ class TitleScreenProbe(Probe):
 
         if self._panes is None:
             self._panes = self._tracker.pane_index(link)
-        if self._panes.scan():
-            return None            # some other screen is up
+        found = self._panes.scan()
+        # None is not an empty screen — it is a sweep that could not read MEM2,
+        # and this probe's whole signal is "no text panes anywhere". Treating
+        # the two alike announced the title screen over the button row, the info
+        # card, the file select and the cafe, on any session where the raw MEM2
+        # backend had gone away, while everything that reads text went quiet.
+        if found is None or found:
+            return None
         self._tracker.enter("title")
         return ("title",)
 

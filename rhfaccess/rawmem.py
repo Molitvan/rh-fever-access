@@ -99,6 +99,11 @@ class RawMemory:
         self._handle = None
         self.mem1_base: Optional[int] = None
         self.mem2_base: Optional[int] = None
+        # How much of each region Dolphin actually mapped. Sweeps need this:
+        # MEM2 is 64 MiB logically but can be mapped as 56, and reads past the
+        # end fail exactly like a dead backend does.
+        self.mem1_size: int = 0
+        self.mem2_size: int = 0
         self.game_id: Optional[bytes] = None
 
     # -- setup -----------------------------------------------------------
@@ -135,8 +140,10 @@ class RawMemory:
                 continue
             for offset in MEM2_OFFSETS:
                 candidate = base + offset
-                if sizes.get(candidate) in MEM2_SIZES:
+                mem2_size = sizes.get(candidate)
+                if mem2_size in MEM2_SIZES:
                     self.mem1_base, self.mem2_base = base, candidate
+                    self.mem1_size, self.mem2_size = size, mem2_size
                     self.game_id = head
                     return True
         return False
@@ -146,10 +153,27 @@ class RawMemory:
             k32.CloseHandle(self._handle)
         self._handle = None
         self.pid = self.mem1_base = self.mem2_base = self.game_id = None
+        self.mem1_size = self.mem2_size = 0
 
     @property
     def available(self) -> bool:
         return self._handle is not None and self.mem2_base is not None
+
+    def healthy(self) -> bool:
+        """True if this attachment still reads the game it attached to.
+
+        `available` cannot answer that. Restarting the game — or Dolphin
+        re-creating its arena for any other reason — moves the emulated RAM,
+        while the process handle stays open and every base recorded here goes
+        on pointing at memory that is no longer the game. Reads then fail
+        forever with nothing above noticing, because MEM1 falls back to
+        dolphin-memory-engine and only MEM2 visibly breaks.
+
+        The disc ID is the cheapest proof: six bytes that must still be there.
+        """
+        if not self.available:
+            return False
+        return self.read(MEM1_LOGICAL, 6) == self.game_id
 
     def _regions(self) -> List[Tuple[int, int, int]]:
         out: List[Tuple[int, int, int]] = []
@@ -180,9 +204,13 @@ class RawMemory:
         return buf.raw[:size]
 
     def host_address(self, logical: int) -> Optional[int]:
-        if self.mem2_base is not None and MEM2_LOGICAL <= logical < MEM2_LOGICAL + 0x4000000:
+        # Bounded by what was actually mapped, not by the logical size of the
+        # region. A 56 MiB MEM2 has no host memory behind its last 8 MiB, and
+        # a read there fails in a way indistinguishable from the backend being
+        # dead — which callers now treat as "cannot verify" and go quiet over.
+        if self.mem2_base is not None and MEM2_LOGICAL <= logical < MEM2_LOGICAL + self.mem2_size:
             return self.mem2_base + (logical - MEM2_LOGICAL)
-        if self.mem1_base is not None and MEM1_LOGICAL <= logical < MEM1_LOGICAL + 0x1800000:
+        if self.mem1_base is not None and MEM1_LOGICAL <= logical < MEM1_LOGICAL + min(self.mem1_size, 0x1800000):
             return self.mem1_base + (logical - MEM1_LOGICAL)
         return None
 
@@ -190,6 +218,8 @@ class RawMemory:
         if not self.available or size <= 0:
             return None
         host = self.host_address(logical)
-        if host is None:
+        # The last byte must land in the same region, or this would read off
+        # the end of one mapping and into whatever the host put next to it.
+        if host is None or self.host_address(logical + size - 1) != host + size - 1:
             return None
         return self._read_raw(host, size)

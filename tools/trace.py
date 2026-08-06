@@ -94,22 +94,28 @@ def main() -> int:
         if now >= next_sweep:
             next_sweep = now + SWEEP_INTERVAL
             found = index.scan()
-            names = frozenset(found)
-            if names != last_names:
-                added = sorted(names - (last_names or frozenset()))
-                gone = sorted((last_names or frozenset()) - names)
-                last_names = names
-                emit(f"[{now:7.2f}] PANES {len(names)} live  "
-                     f"+{len(added)} -{len(gone)}   idx={_hex(idx)}")
-                if added:
-                    emit(f"           appeared: {' '.join(added[:30])}")
-                if gone:
-                    emit(f"           vanished: {' '.join(gone[:30])}")
-            texts = [f"{name}={text[:44]!r}"
-                     for name in WATCHED
-                     if name in found and (text := index.text(name))]
-            if texts:
-                emit("           " + "  ".join(texts))
+            if found is None:
+                # Not "no panes" — the sweep could not read MEM2. Logging that
+                # as an empty screen is precisely the confusion this trace
+                # exists to catch, so it gets its own line.
+                emit(f"[{now:7.2f}] PANES unreadable (MEM2 sweep failed)")
+            else:
+                names = frozenset(found)
+                if names != last_names:
+                    added = sorted(names - (last_names or frozenset()))
+                    gone = sorted((last_names or frozenset()) - names)
+                    last_names = names
+                    emit(f"[{now:7.2f}] PANES {len(names)} live  "
+                         f"+{len(added)} -{len(gone)}   idx={_hex(idx)}")
+                    if added:
+                        emit(f"           appeared: {' '.join(added[:30])}")
+                    if gone:
+                        emit(f"           vanished: {' '.join(gone[:30])}")
+                texts = [f"{name}={text[:44]!r}"
+                         for name in WATCHED
+                         if name in found and (text := index.text(name))]
+                if texts:
+                    emit("           " + "  ".join(texts))
 
         time.sleep(POLL_INTERVAL)
 

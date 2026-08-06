@@ -70,10 +70,27 @@ class PaneIndex:
         self._addresses: Dict[str, int] = {}
         self._rescan_interval = rescan_interval
         self._next_scan = 0.0
+        self._generation = getattr(link, "generation", 0)
 
     # -- lookup ----------------------------------------------------------
 
+    def _check_generation(self) -> None:
+        """Drop every cached address when the emulated memory is remapped.
+
+        Re-attaching to Dolphin hands out a whole new mapping, so every address
+        learned before it describes somewhere that is no longer the game. The
+        name check in `address()` is not enough on its own: it re-reads the same
+        location, and the odds of a plausible pane name being there are small
+        but they are not the odds we want on the wrong side of `text()`.
+        """
+        generation = getattr(self._link, "generation", 0)
+        if generation != self._generation:
+            self._generation = generation
+            self._addresses.clear()
+            self._next_scan = 0.0
+
     def address(self, name: str) -> Optional[int]:
+        self._check_generation()
         addr = self._addresses.get(name)
         if addr is not None and self._name_at(addr) == name:
             return addr
@@ -161,17 +178,33 @@ class PaneIndex:
         self.scan()
         return all(self.address(n) is not None for n in names)
 
-    def scan(self, wanted: Optional[Iterable[str]] = None) -> Dict[str, int]:
-        """Sweep MEM2 for pane names. ~1s, so this is not a per-frame operation."""
+    def scan(self, wanted: Optional[Iterable[str]] = None) -> Optional[Dict[str, int]]:
+        """Sweep MEM2 for pane names, or None if MEM2 could not be read.
+
+        ~0.14s, so this is not a per-frame operation.
+
+        The None is the important part. An empty result is *evidence* here —
+        "this screen has no text on it" is how the title screen is recognised,
+        and a pane going missing is how the file select is told from the game
+        menu — so a sweep that simply could not read MEM2 must never be allowed
+        to look like one. When the raw backend goes stale (the game restarted,
+        Dolphin remapped its arena) every read below returns None, and reporting
+        that as an empty screen announced the title screen on top of the game
+        menu while silencing every probe that reads text.
+        """
+        self._check_generation()
         targets = set(wanted) if wanted is not None else None
         found: Dict[str, int] = {}
         addr = MEM2_START
+        end = MEM2_START + min(MEM2_SIZE, self._link.mem2_extent())
         tail = b""
         tail_addr = addr
+        complete = True
 
-        while addr < MEM2_START + MEM2_SIZE:
-            block = self._link.read(addr, min(CHUNK, MEM2_START + MEM2_SIZE - addr))
+        while addr < end:
+            block = self._link.read(addr, min(CHUNK, end - addr))
             if not block:
+                complete = False
                 addr += CHUNK
                 tail = b""
                 continue
@@ -194,6 +227,13 @@ class PaneIndex:
             tail = block[-34:]
             tail_addr = addr + len(block) - 34
             addr += CHUNK
+
+        if not complete:
+            # Whatever this did manage to see is still worth keeping — a pane
+            # found is a pane found. What it cannot do is prove a pane is gone,
+            # so it neither forgets nor reports a count.
+            self._addresses.update(found)
+            return None
 
         if targets is None:
             # An unfiltered sweep saw everything there is, so it is allowed to

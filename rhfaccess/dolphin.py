@@ -26,6 +26,12 @@ MEM2_END = 0x94000000  # 64 MiB
 ADDR_GAME_ID = 0x80000000  # 6 bytes, e.g. b"SOME01"
 ADDR_GAME_TITLE = 0x80000020  # NUL-terminated ASCII
 
+# How often to retry attaching the raw MEM2 backend, and how often to prove an
+# attached one still works. Both are cheap; both used to happen once and never
+# again, which is how MEM2 could stay dead for the life of the process.
+RAW_RETRY_SECONDS = 2.0
+RAW_HEALTH_SECONDS = 1.0
+
 
 def in_ram(addr: int) -> bool:
     """True if addr looks like a real Wii RAM address."""
@@ -42,7 +48,12 @@ class DolphinLink:
         # dolphin-memory-engine cannot reach MEM2 on current Dolphin builds,
         # so those reads go through a direct ReadProcessMemory backend.
         self._raw = RawMemory()
-        self._raw_tried = False
+        self._raw_next_try = 0.0
+        self._raw_next_check = 0.0
+        # Bumped every time the raw backend attaches. Anything caching an
+        # address across that boundary is caching a location in a mapping that
+        # no longer exists — see PaneIndex.
+        self.generation = 0
 
     # -- connection ------------------------------------------------------
 
@@ -71,7 +82,7 @@ class DolphinLink:
         if dme.is_hooked():
             dme.un_hook()
         self._raw.close()
-        self._raw_tried = False
+        self._raw_next_try = 0.0
         try:
             dme.hook()
         except Exception:
@@ -82,7 +93,7 @@ class DolphinLink:
         if dme.is_hooked():
             dme.un_hook()
         self._raw.close()
-        self._raw_tried = False
+        self._raw_next_try = 0.0
 
     def note_connection_change(self) -> Optional[bool]:
         """Return True/False the first time connection state flips, else None."""
@@ -106,6 +117,15 @@ class DolphinLink:
             data = self._raw.read(addr, size)
             if data is not None:
                 return data
+            # A failed raw read is usually innocent — an unmapped address, a
+            # pointer into freed heap. But it is also what a backend that has
+            # gone stale looks like, and that failure is invisible from above:
+            # MEM1 quietly falls back to dme below, so only MEM2 breaks, and it
+            # breaks by looking like a screen with nothing on it.
+            if self._raw_recovered():
+                data = self._raw.read(addr, size)
+                if data is not None:
+                    return data
 
         if addr >= MEM2_START:
             return None  # dme cannot read MEM2 at all
@@ -119,12 +139,55 @@ class DolphinLink:
         return data
 
     def _ensure_raw(self) -> bool:
+        """Attach the raw backend, retrying on a timer rather than once.
+
+        This used to give up permanently after a single failed attempt, on the
+        assumption that `ensure_connected` would clear the flag on the next
+        disconnect. It does not: that returns early whenever a disc ID can be
+        read, and the disc ID lives in MEM1, which dme serves perfectly well
+        without any raw backend at all. So one unlucky attach — Dolphin not up
+        yet, the game not booted — cost MEM2 for the whole session.
+        """
         if self._raw.available:
             return True
-        if self._raw_tried:
+        now = time.monotonic()
+        if now < self._raw_next_try:
             return False
-        self._raw_tried = True
-        return self._raw.attach()
+        self._raw_next_try = now + RAW_RETRY_SECONDS
+        if not self._raw.attach():
+            return False
+        self.generation += 1
+        return True
+
+    def _raw_recovered(self) -> bool:
+        """Re-attach a backend that has stopped reading the running game.
+
+        Rate-limited, because the common cause of a failed read is a bad
+        address and re-verifying on every one of those would be pure cost.
+        """
+        now = time.monotonic()
+        if now < self._raw_next_check:
+            return False
+        self._raw_next_check = now + RAW_HEALTH_SECONDS
+        if self._raw.healthy():
+            return False
+        self._raw.close()
+        self._raw_next_try = 0.0
+        return self._ensure_raw()
+
+    @property
+    def mem2_available(self) -> bool:
+        """True if MEM2 can be read — where nearly all the game's state lives.
+
+        Worth reporting separately from `connected`: with MEM1 alone the
+        companion still hooks, still names the game and still follows the menu
+        cursor, while every screen that reads text stays silent.
+        """
+        return self.read(MEM2_START, 4) is not None
+
+    def mem2_extent(self) -> int:
+        """Bytes of MEM2 actually mapped, so a sweep stops where the memory does."""
+        return self._raw.mem2_size or (MEM2_END - MEM2_START)
 
     # -- typed reads (PowerPC is big-endian) -----------------------------
 

@@ -241,6 +241,32 @@ machinery already in place — uglier, but it needs no new address.
 Nothing else is claimed. `WATCHES` is still empty; the companion stays silent about
 anything that has not been verified.
 
+### When it is connected but wrong
+
+Run `python tools/diag.py`. It answers the one question no amount of listening
+can: whether the companion can actually read the game.
+
+Being hooked and being able to see are not the same thing. MEM1 reaches Dolphin
+through dolphin-memory-engine; MEM2 goes through a direct reader in
+`rawmem.py`, and that one goes stale whenever Dolphin remaps its emulated RAM —
+restarting the game does it. The process handle stays open, so nothing reports a
+disconnect, and the companion carries on: it still announces the game, still
+follows the cursor, still names the three extras, because all of that is MEM1
+and a hardcoded list. Everything else lives in MEM2 and stops.
+
+The signature to recognise:
+
+- **the extras speak but no game does** — game names come from the text archive,
+  which is in MEM2; `EXTRAS` is three strings in the source
+- **the title screen is announced on top of other screens** — that probe's whole
+  signal is "this screen has no text panes", and a sweep that cannot read MEM2
+  finds none either
+- **the info card, the file select, the buttons and the café go quiet**
+
+It reads like a menu bug and is not one. The link now re-attaches on its own,
+and `run.py` says *"Cannot read the game's memory"* rather than degrading
+quietly, but the shape is worth knowing.
+
 ### Debugging by screenshot
 
 `tools/sweep.py` drives the cursor and saves, at every stop, the index, the name the

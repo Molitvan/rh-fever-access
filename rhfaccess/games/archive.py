@@ -126,11 +126,15 @@ def find(link, want_titles: bool = True) -> Optional[Archive]:
     """
     found: List[Archive] = []
     addr = MEM2_START
+    # Stop where the mapping does. Reading past a 56 MiB MEM2 fails on every
+    # chunk, which costs nothing but is also the one shape of failure worth not
+    # confusing with a real one.
+    end = MEM2_START + min(MEM2_SIZE, link.mem2_extent())
     tail = b""
     tail_addr = addr
 
-    while addr < MEM2_START + MEM2_SIZE:
-        block = link.read(addr, min(CHUNK, MEM2_START + MEM2_SIZE - addr))
+    while addr < end:
+        block = link.read(addr, min(CHUNK, end - addr))
         if not block:
             addr += CHUNK
             tail = b""

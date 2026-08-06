@@ -30,6 +30,9 @@ from rhfaccess.games import rhf  # noqa: E402
 
 def snapshot(link, index):
     found = index.scan()
+    if found is None:
+        print("MEM2 unreadable — see tools/diag.py. Nothing to dump.")
+        return {}
     out = {}
     for name in sorted(found):
         text = index.text(name)
