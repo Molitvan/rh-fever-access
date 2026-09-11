@@ -976,20 +976,76 @@ class TitleScreenProbe(Probe):
         return [Utterance(TITLE_ANNOUNCEMENT, interrupt=True, priority=9)]
 
 
+# The dialogue immediately after creating a save uses the same numbered names
+# as gameplay tutorials, but occurs before the game menu exists: grid index 0,
+# null entry pointer. Keep it separate so TutorialProbe's gameplay gate remains
+# strict. This layout currently exposes only 00 and 01.
+PANE_WELCOME_MESSAGES = ("T_message_00", "T_message_01")
+
+# The low bit immediately before a numbered message pane's name tracks whether
+# that pane is selected for display. Verified independently on the new-save
+# welcome dialogue and Hole in One's tutorial layout.
+MESSAGE_DISPLAY_FLAG_OFFSET = -1
+
+
+class WelcomeDialogueProbe(Probe):
+    """Read the introductory dialogue shown after creating a new save."""
+
+    name = "welcome_dialogue"
+    interval = 0.1
+    stable_ticks = 2
+    forget_after = 20
+
+    def __init__(self, tracker: "ScreenTracker") -> None:
+        self._panes = None
+        self._tracker = tracker
+
+    def reset(self) -> None:
+        self._panes = None
+
+    def read(self, link) -> Optional[Hashable]:
+        # This sequence runs before the tower exists. Requiring both the cold
+        # grid value and a null entry keeps it apart from gameplay tutorials.
+        if link.u8(ADDR_GRID_INDEX) != 0 or link.pointer(ADDR_GRID_ENTRY_PTR) is not None:
+            return None
+        if self._panes is None:
+            self._panes = self._tracker.pane_index(link)
+
+        # Finding the welcome message triggers a full sweep, whose successful
+        # absence check distinguishes this layout from the resident file UI.
+        self._panes.ensure(PANE_WELCOME_MESSAGES)
+        if self._panes.live(PANE_FILE_PROMPT):
+            return None
+
+        active = []
+        for name in PANE_WELCOME_MESSAGES:
+            address = self._panes.address(name)
+            if address is None:
+                continue
+            text = self._panes.text(name)
+            if not text:
+                continue
+            flag = link.u8(address + MESSAGE_DISPLAY_FLAG_OFFSET)
+            if flag is None:
+                return None
+            if flag & 1:
+                active.append((name, text))
+        if len(active) != 1:
+            return None
+        self._tracker.enter("welcome")
+        return active[0]
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        _pane, text = current
+        return [Utterance(text, interrupt=True, priority=8)]
+
+
 # In-game tutorial speech bubbles ("Ookii! (See what I do, then copy it!)").
 # Some tutorials use several numbered panes rather than replacing one pane's
 # text. Hole in One, for example, leaves its first line in T_message_00 and
 # moves the follow-up to T_message_01. Reading only the first pane therefore
 # returns the same snapshot forever and the engine correctly says nothing.
 PANE_TUTORIALS = tuple(f"T_message_0{i}" for i in range(4))
-
-# The low bit immediately before a tutorial pane's name tracks whether that
-# pane is selected for display. Verified on Hole in One's Continue/Quit prompt:
-# T_message_00 retained the earlier text with 0 here while T_message_01 held
-# the current text with 1. Keep this local to the tutorial until it has been
-# verified as a general NW4R visibility property.
-TUTORIAL_DISPLAY_FLAG_OFFSET = -1
-
 
 class TutorialProbe(Probe):
     """Reads the tutorial bubbles shown when a game starts.
@@ -1029,7 +1085,7 @@ class TutorialProbe(Probe):
             text = self._panes.text(name)
             if not text:
                 continue
-            flag = link.u8(address + TUTORIAL_DISPLAY_FLAG_OFFSET)
+            flag = link.u8(address + MESSAGE_DISPLAY_FLAG_OFFSET)
             if flag is None:
                 return None
             if flag & 1:
@@ -1416,6 +1472,7 @@ def build_probes() -> List[Probe]:
     # One tracker shared by the screen probes so they agree on where we are.
     tracker = ScreenTracker()
     probes: List[Probe] = [GameIdentityProbe(), TitleScreenProbe(tracker),
+                           WelcomeDialogueProbe(tracker),
                            GridCursorProbe(tracker), MenuButtonProbe(tracker),
                            InfoCardProbe(tracker),
                            FileSelectProbe(tracker), SaveLabelProbe(tracker),

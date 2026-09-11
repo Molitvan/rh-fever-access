@@ -213,7 +213,10 @@ line in `T_message_00` and puts the next one in `T_message_01`. For these panes,
 the low bit at name `-1` distinguished the retained line (`0`) from the current
 one (`1`). `TutorialProbe` checks `T_message_00`–`03` and requires exactly one
 non-empty pane with that bit set before speaking. This flag is only verified for
-the tutorial layout; do not treat it as a general NW4R visibility signal yet.
+numbered message layouts; do not treat it as a general NW4R visibility signal.
+The new-save welcome sequence uses `T_message_00`/`01` too, but it runs with the
+cold grid value and null entry pointer rather than gameplay's `0xFF`. Its probe
+also requires the resident file prompt to be absent after a successful sweep.
 
 **Share the pane index.** Every probe must take its `PaneIndex` from
 `ScreenTracker.pane_index()`. A sweep costs ~0.14s and a probe sweeps whenever a
