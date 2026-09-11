@@ -192,8 +192,206 @@ PANE_FILE_PROMPT = "T_no_data_00"     # "Select one!"
 PANE_FILE_FLOW = "T_nori_num_0{}"     # "nori" = groove; the Flow number
 PANE_FILE_MEDALS = "T_medal_num_0{}"
 
+# New saves pass through a second file-related screen whose fifteen labels are
+# artwork rather than text. The cursor is an NW4R pane with a live transform;
+# its position exactly matches the container pane of the highlighted label.
+PANE_SAVE_LABEL_PROMPT = "T_menu_msg_01"
+PANE_SAVE_LABEL_CURSOR = "N_cursor_frm_00"
+PANE_SAVE_LABEL_GROUP = "W_menu_01"
+PANE_SAVE_LABEL_BACK = "T_back_btn_02"
+PANE_SAVE_LABEL_MII = "T_Mii_btn_00"
+
+# Row-major order, read from the US screen. Like the tower's EXTRAS, these have
+# to be authored because the game renders the words as artwork.
+SAVE_LABELS = (
+    "Me", "Friend", "Pal", "Mom", "Dad",
+    "Myself", "Grandma", "Grandpa", "B.F.", "G.F.",
+    "You", "Big Bro", "Big Sis", "Li'l Bro", "Li'l Sis",
+)
+
+# Live transforms of N_name_00..14. The cursor at Dad was verified as
+# (124.231, 83.195), exactly N_name_04's transform. The two button positions
+# come from N_back_btn_02 and N_mii_btn_00 in the same live layout.
+SAVE_LABEL_X = (-124.23075, -62.11538, 0.0, 62.11538, 124.23075)
+SAVE_LABEL_Y = (83.19475, -1.80525, -86.80525)
+SAVE_LABEL_BUTTONS = {
+    (-94.26923, -174.0): PANE_SAVE_LABEL_BACK,
+    (60.65385, -174.0): PANE_SAVE_LABEL_MII,
+}
+SAVE_LABEL_POSITION_TOLERANCE = 2.0
+SAVE_LABEL_GROUP_ONSCREEN_Y = -34.0
+
 INVALID_INDEX = 0xFF
 MAX_NAME_LENGTH = 32
+
+
+class _SaveLabelCursor:
+    """Locate and decode the save-label cursor without caching a heap address.
+
+    The name exists twice: once in the live pane and once in the serialized
+    layout data. A usable alpha plus a coordinate matching a selectable target
+    separates the live object. Re-scan after every raw-memory generation.
+    """
+
+    def __init__(self) -> None:
+        self._address: Optional[int] = None
+        self._group_address: Optional[int] = None
+        self._generation = -1
+
+    @staticmethod
+    def _choice_at(x: float, y: float) -> Optional[Hashable]:
+        for row, target_y in enumerate(SAVE_LABEL_Y):
+            for column, target_x in enumerate(SAVE_LABEL_X):
+                if (abs(x - target_x) <= SAVE_LABEL_POSITION_TOLERANCE
+                        and abs(y - target_y) <= SAVE_LABEL_POSITION_TOLERANCE):
+                    return row * len(SAVE_LABEL_X) + column
+        for (target_x, target_y), pane in SAVE_LABEL_BUTTONS.items():
+            if (abs(x - target_x) <= SAVE_LABEL_POSITION_TOLERANCE
+                    and abs(y - target_y) <= SAVE_LABEL_POSITION_TOLERANCE):
+                return pane
+        return None
+
+    def _position(self, link, address: int) -> Optional[tuple]:
+        """Return the live cursor position, including while it is animating."""
+        if link.cstring(address, MAX_PANE_NAME, "ascii") != PANE_SAVE_LABEL_CURSOR:
+            return None
+        alpha = link.u8(address + panes.ALPHA_OFFSET)
+        x = link.f32(address - 0x2C)
+        y = link.f32(address - 0x1C)
+        if alpha is None or alpha < panes.VISIBLE_ALPHA or x is None or y is None:
+            return None
+        # The serialized layout copy decodes as enormous/non-finite coordinates
+        # and has alpha 4. These generous bounds retain the live pane while it
+        # travels between choices without accepting that resource copy.
+        if not (-1000.0 <= x <= 1000.0 and -1000.0 <= y <= 1000.0):
+            return None
+        return (x, y)
+
+    def _locate(self, link) -> Optional[int]:
+        generation = getattr(link, "generation", 0)
+        if generation != self._generation:
+            self._generation = generation
+            self._address = None
+            self._group_address = None
+
+        if self._address is not None and self._position(link, self._address) is not None:
+            return self._address
+        if self._address is not None:
+            self._address = None
+
+        target = PANE_SAVE_LABEL_CURSOR.encode("ascii") + b"\x00"
+        matches = []
+        address = panes.MEM2_START
+        end = panes.MEM2_START + min(panes.MEM2_SIZE, link.mem2_extent())
+        tail = b""
+        tail_address = address
+        complete = True
+
+        while address < end:
+            block = link.read(address, min(panes.CHUNK, end - address))
+            if not block:
+                complete = False
+                address += panes.CHUNK
+                tail = b""
+                continue
+            data = tail + block
+            base = tail_address if tail else address
+            offset = data.find(target)
+            while offset != -1:
+                hit = base + offset
+                if hit % 4 == 0 and self._position(link, hit) is not None:
+                    matches.append(hit)
+                offset = data.find(target, offset + 1)
+            overlap = len(target) - 1
+            tail = block[-overlap:]
+            tail_address = address + len(block) - overlap
+            address += panes.CHUNK
+
+        if not complete or len(matches) != 1:
+            return None
+        self._address = matches[0]
+        return self._address
+
+    def _group_position(self, link, address: int) -> Optional[tuple]:
+        if link.cstring(address, MAX_PANE_NAME, "ascii") != PANE_SAVE_LABEL_GROUP:
+            return None
+        # Runtime panes have the NW4R type byte immediately before their final
+        # flag byte. Serialized layout records with the same name do not.
+        if link.u8(address - 2) != 0x04:
+            return None
+        x = link.f32(address - 0x2C)
+        y = link.f32(address - 0x1C)
+        if x is None or y is None:
+            return None
+        if not (-1000.0 <= x <= 1000.0 and -1000.0 <= y <= 1000.0):
+            return None
+        return (x, y)
+
+    def _locate_group(self, link) -> Optional[int]:
+        if (self._group_address is not None
+                and self._group_position(link, self._group_address) is not None):
+            return self._group_address
+        self._group_address = None
+
+        target = PANE_SAVE_LABEL_GROUP.encode("ascii") + b"\x00"
+        matches = []
+        address = panes.MEM2_START
+        end = panes.MEM2_START + min(panes.MEM2_SIZE, link.mem2_extent())
+        tail = b""
+        tail_address = address
+        complete = True
+        while address < end:
+            block = link.read(address, min(panes.CHUNK, end - address))
+            if not block:
+                complete = False
+                address += panes.CHUNK
+                tail = b""
+                continue
+            data = tail + block
+            base = tail_address if tail else address
+            offset = data.find(target)
+            while offset != -1:
+                hit = base + offset
+                if hit % 4 == 0 and self._group_position(link, hit) is not None:
+                    matches.append(hit)
+                offset = data.find(target, offset + 1)
+            overlap = len(target) - 1
+            tail = block[-overlap:]
+            tail_address = address + len(block) - overlap
+            address += panes.CHUNK
+
+        if not complete or len(matches) != 1:
+            return None
+        self._group_address = matches[0]
+        return self._group_address
+
+    def present(self, link) -> bool:
+        """True while the label group is on screen, including between choices."""
+        if self._locate(link) is None:
+            return False
+        group = self._locate_group(link)
+        if group is None:
+            return False
+        position = self._group_position(link, group)
+        if position is None:
+            return False
+        x, y = position
+        # When file select is active this whole submenu is parked at Y=-500,
+        # even though its children retain their text, alpha and cursor state.
+        # Its measured resting transform on the label screen is Y=-34.
+        return (abs(x) <= SAVE_LABEL_POSITION_TOLERANCE
+                and abs(y - SAVE_LABEL_GROUP_ONSCREEN_Y) <= SAVE_LABEL_POSITION_TOLERANCE)
+
+    def selection(self, link) -> Optional[Hashable]:
+        if not self.present(link):
+            return None
+        address = self._locate(link)
+        if address is None:
+            return None
+        position = self._position(link, address)
+        if position is None:
+            return None
+        return self._choice_at(*position)
 
 
 # Everything selectable in the game menu — the tower entries and the row of
@@ -316,6 +514,7 @@ class ScreenTracker:
         self.visits: Dict[str, int] = {}
         self.last_grid_seen = 0.0
         self._panes = None
+        self._save_label_cursor = _SaveLabelCursor()
 
     def pane_index(self, link):
         """The one pane index, shared by every probe that reads text.
@@ -339,6 +538,12 @@ class ScreenTracker:
         if not self.last_grid_seen:
             return float("inf")
         return time.monotonic() - self.last_grid_seen
+
+    def save_label_selection(self, link) -> Optional[Hashable]:
+        return self._save_label_cursor.selection(link)
+
+    def save_label_present(self, link) -> bool:
+        return self._save_label_cursor.present(link)
 
     def enter(self, name: str, quiet_from: Iterable[str] = ()) -> int:
         """Mark `name` active; returns that screen's own arrival count.
@@ -998,6 +1203,54 @@ class CafeTalkProbe(Probe):
         return [Utterance(text, interrupt=True, priority=7)]
 
 
+class SaveLabelProbe(Probe):
+    """Speak the artwork labels offered while creating a new save."""
+
+    name = "save_label"
+    interval = 0.05
+    stable_ticks = 3
+    forget_after = 12
+
+    def __init__(self, tracker: "ScreenTracker") -> None:
+        self._panes = None
+        self._tracker = tracker
+        self._intro = _IntroState()
+
+    def reset(self) -> None:
+        self._panes = None
+        self._intro = _IntroState()
+
+    def read(self, link) -> Optional[Hashable]:
+        choice = self._tracker.save_label_selection(link)
+        if choice is None:
+            return None
+        if self._panes is None:
+            self._panes = self._tracker.pane_index(link)
+        self._panes.ensure((PANE_SAVE_LABEL_PROMPT, PANE_SAVE_LABEL_BACK,
+                            PANE_SAVE_LABEL_MII))
+        prompt = self._panes.text(PANE_SAVE_LABEL_PROMPT)
+        if not prompt:
+            return None
+
+        if isinstance(choice, int):
+            if not (0 <= choice < len(SAVE_LABELS)):
+                return None
+            label = SAVE_LABELS[choice]
+        else:
+            label = self._panes.text(str(choice))
+            if not label:
+                return None
+
+        visit = self._tracker.enter("save_label")
+        self._intro.update(visit)
+        return (visit, choice, prompt, label)
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        _visit, _choice, prompt, label = current
+        intro = prompt if self._intro.take() else None
+        return _with_intro(intro, label, priority=6)
+
+
 class FileSelectProbe(Probe):
     """Speaks the highlighted save slot on the file select screen.
 
@@ -1038,6 +1291,15 @@ class FileSelectProbe(Probe):
 
     def read(self, link) -> Optional[Hashable]:
         slot = link.u8(ADDR_FILE_SLOT)
+        # The label picker is another submenu in the same resident file layout,
+        # so its stale file-slot panes otherwise look exactly like File 1.
+        # Presence is deliberately broader than a settled selection. During a
+        # cursor animation no grid coordinate is trustworthy, but this is still
+        # the label screen; letting this probe claim that interval increments
+        # the label screen's visit count and replays its heading on every move.
+        if self._tracker.save_label_present(link):
+            self._slots = {}
+            return None
         if self._panes is None:
             self._panes = self._tracker.pane_index(link)
         # One unfiltered sweep caches every slot's panes at once, and asking
@@ -1087,7 +1349,8 @@ def build_probes() -> List[Probe]:
     probes: List[Probe] = [GameIdentityProbe(), TitleScreenProbe(tracker),
                            GridCursorProbe(tracker), MenuButtonProbe(tracker),
                            InfoCardProbe(tracker),
-                           FileSelectProbe(tracker), TutorialProbe(tracker), ResultProbe(tracker),
+                           FileSelectProbe(tracker), SaveLabelProbe(tracker),
+                           TutorialProbe(tracker), ResultProbe(tracker),
                            NoticeProbe(tracker), CafeTalkProbe(tracker)]
     probes.extend(WatchProbe(w) for w in WATCHES)
     return probes

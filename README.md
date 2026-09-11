@@ -18,6 +18,9 @@ Working today:
 - **Game info card** — select a game and it reads the card: *"Tambourine. Ready to play
   a little Simian Says on the tambourine?"*
 - **Save file select** — *"File 1. Flow 89. 16 medals."* / *"File 2. New game."*
+- **New-save labels** — announces the fifteen artwork choices (*"Me"*, *"Friend"*,
+  *"Dad"*, and so on), plus the game-provided Back and Choose Mii labels. The
+  highlighted choice is derived from the live `N_cursor_frm_00` pane's transform.
 - **Tutorial bubbles** — *"Ookii! (See what I do, then copy it!)"*, following the
   sequence across `T_message_00`–`03` as you advance it. Earlier numbered panes
   can retain old lines, so the active pane is corroborated with its layout display

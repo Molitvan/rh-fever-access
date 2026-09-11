@@ -112,6 +112,18 @@ or the file select. Everything behind `0xFF` needs a second signal:
 | title screen | `0xFF` or `0x00` | `0xFF` or `0x00` | sentinel, or null on boot | **0** |
 | file select | `0xFF` | `0xFF` | sentinel | 28 |
 
+The new-save label picker reuses that resident file layout, so the file panes
+alone misidentify it as File 1. Its fifteen labels are artwork, but its live
+`N_cursor_frm_00` pane moves to the transform of `N_name_00`–`14`. Locate that
+cursor pane by name at runtime; the same name also occurs in serialized layout
+data, so require usable alpha and a coordinate matching a selectable target.
+The cursor and child text remain live after returning to file select, so they
+do not prove the label screen is active. Its parent `W_menu_01` does: it sits at
+Y=-34 on the label screen and is parked at Y=-500 on file select. Require that
+parent at its on-screen transform before suppressing `FileSelectProbe`.
+The labels are authored from the US screen, like `EXTRAS`; Back and Choose Mii
+come from their text panes.
+
 The card and the post-game screens both sit behind `0xFF` with the pointer on
 the same entry, so they are separated by *timing* — a card opens straight off
 the grid, an epilogue can only follow a game. That is a heuristic and is
