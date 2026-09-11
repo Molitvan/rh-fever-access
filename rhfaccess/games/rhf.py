@@ -200,6 +200,9 @@ PANE_SAVE_LABEL_CURSOR = "N_cursor_frm_00"
 PANE_SAVE_LABEL_GROUP = "W_menu_01"
 PANE_SAVE_LABEL_BACK = "T_back_btn_02"
 PANE_SAVE_LABEL_MII = "T_Mii_btn_00"
+PANE_SAVE_CONFIRM_PROMPT = "T_msg_02"
+PANE_SAVE_CONFIRM_NO = "T_NG_btn_00"
+PANE_SAVE_CONFIRM_YES = "T_OK_btn_00"
 
 # Row-major order, read from the US screen. Like the tower's EXTRAS, these have
 # to be authored because the game renders the words as artwork.
@@ -220,6 +223,10 @@ SAVE_LABEL_BUTTONS = {
 }
 SAVE_LABEL_POSITION_TOLERANCE = 2.0
 SAVE_LABEL_GROUP_ONSCREEN_Y = -34.0
+SAVE_CONFIRM_BUTTONS = {
+    (-95.0, -126.0): PANE_SAVE_CONFIRM_NO,
+    (95.0, -126.0): PANE_SAVE_CONFIRM_YES,
+}
 
 INVALID_INDEX = 0xFF
 MAX_NAME_LENGTH = 32
@@ -393,6 +400,23 @@ class _SaveLabelCursor:
             return None
         return self._choice_at(*position)
 
+    def confirmation_selection(self, link) -> Optional[str]:
+        """Text pane for the highlighted No/Yes button, or None."""
+        if not self.present(link):
+            return None
+        address = self._locate(link)
+        if address is None:
+            return None
+        position = self._position(link, address)
+        if position is None:
+            return None
+        x, y = position
+        for (target_x, target_y), pane in SAVE_CONFIRM_BUTTONS.items():
+            if (abs(x - target_x) <= SAVE_LABEL_POSITION_TOLERANCE
+                    and abs(y - target_y) <= SAVE_LABEL_POSITION_TOLERANCE):
+                return pane
+        return None
+
 
 # Everything selectable in the game menu — the tower entries and the row of
 # buttons beside it — is backed by an NW4R pane, and ADDR_GRID_ENTRY_PTR points
@@ -544,6 +568,9 @@ class ScreenTracker:
 
     def save_label_present(self, link) -> bool:
         return self._save_label_cursor.present(link)
+
+    def save_confirmation_selection(self, link) -> Optional[str]:
+        return self._save_label_cursor.confirmation_selection(link)
 
     def enter(self, name: str, quiet_from: Iterable[str] = ()) -> int:
         """Mark `name` active; returns that screen's own arrival count.
@@ -1241,7 +1268,9 @@ class SaveLabelProbe(Probe):
             if not label:
                 return None
 
-        visit = self._tracker.enter("save_label")
+        # Choosing No on the confirmation dialog returns to the same grid, not
+        # a new arrival, so do not replay the long heading in that direction.
+        visit = self._tracker.enter("save_label", quiet_from=("save_confirm",))
         self._intro.update(visit)
         return (visit, choice, prompt, label)
 
@@ -1249,6 +1278,46 @@ class SaveLabelProbe(Probe):
         _visit, _choice, prompt, label = current
         intro = prompt if self._intro.take() else None
         return _with_intro(intro, label, priority=6)
+
+
+class SaveConfirmProbe(Probe):
+    """Speak the Continue? dialog and its highlighted No/Yes button."""
+
+    name = "save_confirm"
+    interval = 0.05
+    stable_ticks = 3
+    forget_after = 12
+
+    def __init__(self, tracker: "ScreenTracker") -> None:
+        self._panes = None
+        self._tracker = tracker
+        self._intro = _IntroState()
+
+    def reset(self) -> None:
+        self._panes = None
+        self._intro = _IntroState()
+
+    def read(self, link) -> Optional[Hashable]:
+        selected_pane = self._tracker.save_confirmation_selection(link)
+        if selected_pane is None:
+            return None
+        if self._panes is None:
+            self._panes = self._tracker.pane_index(link)
+        wanted = (PANE_SAVE_CONFIRM_PROMPT, PANE_SAVE_CONFIRM_NO,
+                  PANE_SAVE_CONFIRM_YES)
+        self._panes.ensure(wanted)
+        prompt = self._panes.text(PANE_SAVE_CONFIRM_PROMPT)
+        label = self._panes.text(selected_pane)
+        if not prompt or not label:
+            return None
+        visit = self._tracker.enter("save_confirm")
+        self._intro.update(visit)
+        return (visit, selected_pane, prompt, label)
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        _visit, _selected_pane, prompt, label = current
+        intro = prompt if self._intro.take() else None
+        return _with_intro(intro, label, priority=7)
 
 
 class FileSelectProbe(Probe):
@@ -1350,6 +1419,7 @@ def build_probes() -> List[Probe]:
                            GridCursorProbe(tracker), MenuButtonProbe(tracker),
                            InfoCardProbe(tracker),
                            FileSelectProbe(tracker), SaveLabelProbe(tracker),
+                           SaveConfirmProbe(tracker),
                            TutorialProbe(tracker), ResultProbe(tracker),
                            NoticeProbe(tracker), CafeTalkProbe(tracker)]
     probes.extend(WatchProbe(w) for w in WATCHES)

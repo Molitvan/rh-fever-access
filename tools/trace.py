@@ -44,7 +44,9 @@ WATCHED = (
     (rhf.PANE_FILE_PROMPT,)
     + tuple(rhf.PANE_FILE_FLOW.format(i) for i in range(rhf.FILE_SLOT_COUNT))
     + tuple(rhf.PANE_FILE_MEDALS.format(i) for i in range(rhf.FILE_SLOT_COUNT))
-    + (rhf.PANE_SAVE_LABEL_PROMPT, rhf.PANE_CARD_TITLE, rhf.PANE_CARD_TEXT,
+    + (rhf.PANE_SAVE_LABEL_PROMPT, rhf.PANE_SAVE_CONFIRM_PROMPT,
+       rhf.PANE_SAVE_CONFIRM_NO, rhf.PANE_SAVE_CONFIRM_YES,
+       rhf.PANE_CARD_TITLE, rhf.PANE_CARD_TEXT,
        rhf.PANE_CARD_CONTROLS,
        *rhf.PANE_TUTORIALS, rhf.PANE_REWARD,
        rhf.PANE_NOTICE_TITLE, rhf.PANE_NOTICE_BODY, rhf.PANE_NOTICE_PROMPT,

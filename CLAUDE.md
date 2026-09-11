@@ -124,6 +124,11 @@ parent at its on-screen transform before suppressing `FileSelectProbe`.
 The labels are authored from the US screen, like `EXTRAS`; Back and Choose Mii
 come from their text panes.
 
+The confirmation dialog after choosing a label uses that same cursor at
+`(-95, -126)` for No and `(95, -126)` for Yes. Its prompt and labels are text
+panes (`T_msg_02`, `T_NG_btn_00`, `T_OK_btn_00`). Returning from No is a quiet
+return to the label grid and must not replay the grid's heading.
+
 The card and the post-game screens both sit behind `0xFF` with the pointer on
 the same entry, so they are separated by *timing* — a card opens straight off
 the grid, an epilogue can only follow a game. That is a heuristic and is

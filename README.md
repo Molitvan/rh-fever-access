@@ -21,6 +21,8 @@ Working today:
 - **New-save labels** — announces the fifteen artwork choices (*"Me"*, *"Friend"*,
   *"Dad"*, and so on), plus the game-provided Back and Choose Mii labels. The
   highlighted choice is derived from the live `N_cursor_frm_00` pane's transform.
+  The following *"Continue?"* dialog and its highlighted No/Yes button are read
+  from the game as well.
 - **Tutorial bubbles** — *"Ookii! (See what I do, then copy it!)"*, following the
   sequence across `T_message_00`–`03` as you advance it. Earlier numbered panes
   can retain old lines, so the active pane is corroborated with its layout display
