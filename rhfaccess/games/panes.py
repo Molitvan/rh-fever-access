@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Optional, Tuple
 
 MEM2_START = 0x90000000
 MEM2_SIZE = 0x4000000
@@ -68,6 +68,7 @@ class PaneIndex:
     def __init__(self, link, rescan_interval: float = 3.0) -> None:
         self._link = link
         self._addresses: Dict[str, int] = {}
+        self._matches: Dict[str, Tuple[int, ...]] = {}
         self._rescan_interval = rescan_interval
         self._next_scan = 0.0
         self._generation = getattr(link, "generation", 0)
@@ -87,6 +88,7 @@ class PaneIndex:
         if generation != self._generation:
             self._generation = generation
             self._addresses.clear()
+            self._matches.clear()
             self._next_scan = 0.0
 
     def address(self, name: str) -> Optional[int]:
@@ -96,6 +98,20 @@ class PaneIndex:
             return addr
         self._addresses.pop(name, None)
         return None
+
+    def addresses(self, name: str) -> Tuple[int, ...]:
+        """Return every cached runtime pane with this name that still exists."""
+        self._check_generation()
+        candidates = self._matches.get(name, ())
+        valid = tuple(addr for addr in candidates if self._name_at(addr) == name)
+        if valid:
+            self._matches[name] = valid
+        else:
+            self._matches.pop(name, None)
+        primary = self.address(name)
+        if primary is not None and primary not in valid:
+            valid = (primary,) + valid
+        return valid
 
     def live(self, name: str) -> bool:
         """True if the pane existed at the last full sweep and still validates.
@@ -112,6 +128,10 @@ class PaneIndex:
         addr = self.address(name)
         if addr is None:
             return None
+        return self.text_at(addr)
+
+    def text_at(self, addr: int) -> Optional[str]:
+        """Read text from a particular object when a pane name is duplicated."""
         pointer = self._link.u32(addr + TEXT_POINTER_OFFSET)
         if pointer is None or not (MEM2_START <= pointer < MEM2_START + MEM2_SIZE):
             return None
@@ -195,6 +215,7 @@ class PaneIndex:
         self._check_generation()
         targets = set(wanted) if wanted is not None else None
         found: Dict[str, int] = {}
+        found_all: Dict[str, list] = {}
         addr = MEM2_START
         end = MEM2_START + min(MEM2_SIZE, self._link.mem2_extent())
         tail = b""
@@ -218,12 +239,10 @@ class PaneIndex:
                 name = match.group()[:-1].decode("ascii")
                 if targets is not None and name not in targets:
                     continue
-                # Keep the first pane of a given name that has a usable pointer.
-                if name in found:
-                    continue
                 pointer = self._link.u32(pane + TEXT_POINTER_OFFSET)
                 if pointer and MEM2_START <= pointer < MEM2_START + MEM2_SIZE:
-                    found[name] = pane
+                    found.setdefault(name, pane)
+                    found_all.setdefault(name, []).append(pane)
             tail = block[-34:]
             tail_addr = addr + len(block) - 34
             addr += CHUNK
@@ -233,6 +252,10 @@ class PaneIndex:
             # found is a pane found. What it cannot do is prove a pane is gone,
             # so it neither forgets nor reports a count.
             self._addresses.update(found)
+            for name, matches in found_all.items():
+                previous = self._matches.get(name, ())
+                self._matches[name] = tuple(
+                    dict.fromkeys(previous + tuple(matches)))
             return None
 
         if targets is None:
@@ -242,6 +265,12 @@ class PaneIndex:
             # that heap — the name survives the free, so address() alone cannot
             # notice. Callers depend on this to use absence as evidence.
             self._addresses = dict(found)
+            self._matches = {
+                name: tuple(matches) for name, matches in found_all.items()
+            }
         else:
             self._addresses.update(found)
+            self._matches.update({
+                name: tuple(matches) for name, matches in found_all.items()
+            })
         return found

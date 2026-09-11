@@ -28,8 +28,10 @@ Working today:
 - **Tutorial bubbles** — *"Ookii! (See what I do, then copy it!)"*, following the
   sequence across `T_message_00`–`03` as you advance it. Earlier numbered panes
   can retain old lines, so the active pane is corroborated with its layout display
-  flag. Gameplay itself has no text panes at all, so this is the only text the game
-  shows once a game begins.
+  flag. Resident practice layouts can also contain duplicate pane names; all live
+  matches are retained so Screwbot Factory's hidden empty `T_message_00` cannot
+  mask its active instruction. Gameplay itself has no text panes at all, so this
+  is the only text the game shows once a game begins.
 - **Set changes** — left/right jump a whole set, so those announce *"Set 2. Fork
   Lifter"*; moving within a set just names the game.
 - **The game menu's buttons** — *"Two Player"*, *"Back"* (the option that leaves
@@ -48,7 +50,10 @@ Working today:
   screen the epilogue panes are empty, so the two arrive separately)
 - **Post-medal message** — *"Thanks, mister! You're the best!"* (pane
   `T_Message_00` — capital M, a different pane from the tutorial's lowercase
-  `T_message_00`; the game's pane names are case sensitive)
+  `T_message_00`; the game's pane names are case sensitive). The result probe
+  refreshes briefly during the layout handoff so messages such as
+  *"Championship title, here we come!"* are not lost in the cache's normal
+  five-second rescan interval.
 - **Perfect-attempt notice** — *"Notice! If you get a Perfect on Micro-Row right
   now, you'll receive its music, also titled 'Micro-Row.' Press A!"* (panes
   `T_title_spot_00` / `T_window_00` / `T_win_msg_sub_00`, which the game clears

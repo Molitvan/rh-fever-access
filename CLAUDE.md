@@ -144,6 +144,14 @@ NW4R parent chains, and accepts only objects sharing the visible
 It requires exactly one active rank and queues the rank after `ResultProbe`'s
 feedback rather than interrupting it.
 
+The feedback layout is freed before the following Perfect/post-medal message
+layout is created. A shared `PaneIndex` sweep can land in that empty handoff and
+then wait its normal five-second rescan interval, delaying or missing the short
+follow-up screen. `ResultProbe` detects its caption disappearing and briefly
+refreshes the shared index at 250 ms until `T_pft_00` or `T_Message_00` appears.
+Keep that refresh confined to the transition; continuous MEM2 sweeps noticeably
+slow the poll loop.
+
 ## Reading on-screen text (start here for any new screen)
 
 The UI is NW4R layouts. Every text box is an object holding its own ASCII pane
@@ -224,6 +232,11 @@ the low bit at name `-1` distinguished the retained line (`0`) from the current
 one (`1`). `TutorialProbe` checks `T_message_00`–`03` and requires exactly one
 non-empty pane with that bit set before speaking. This flag is only verified for
 numbered message layouts; do not treat it as a general NW4R visibility signal.
+Pane names are not necessarily unique: Screwbot Factory kept one hidden, empty
+`T_message_00` object before a second `T_message_00` containing *"Your job will
+be to screw the robots' heads on."* `PaneIndex` therefore retains every runtime
+match, and `TutorialProbe` evaluates the text and flag of each duplicate rather
+than trusting the first address found.
 The new-save welcome sequence uses `T_message_00`/`01` too, but it runs with the
 cold grid value and null entry pointer rather than gameplay's `0xFF`. Its probe
 also requires the resident file prompt to be absent after a successful sweep.

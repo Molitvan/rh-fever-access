@@ -1079,17 +1079,18 @@ class TutorialProbe(Probe):
         self._panes.ensure(PANE_TUTORIALS)
         active = []
         for name in PANE_TUTORIALS:
-            address = self._panes.address(name)
-            if address is None:
-                continue
-            text = self._panes.text(name)
-            if not text:
-                continue
-            flag = link.u8(address + MESSAGE_DISPLAY_FLAG_OFFSET)
-            if flag is None:
-                return None
-            if flag & 1:
-                active.append((name, text))
+            # Different resident practice layouts can reuse the same pane
+            # name. Screwbot Factory, for example, has a hidden empty
+            # T_message_00 before the active one containing its instruction.
+            for address in self._panes.addresses(name):
+                text = self._panes.text_at(address)
+                if not text:
+                    continue
+                flag = link.u8(address + MESSAGE_DISPLAY_FLAG_OFFSET)
+                if flag is None:
+                    return None
+                if flag & 1:
+                    active.append((name, text))
         if len(active) != 1:
             return None
         return active[0]
@@ -1263,13 +1264,21 @@ class ResultProbe(Probe):
     interval = 0.1
     stable_ticks = 2
     forget_after = 20
+    FOLLOWUP_SCAN_INTERVAL = 0.25
+    FOLLOWUP_SCAN_SECONDS = 4.0
 
     def __init__(self, tracker: "ScreenTracker") -> None:
         self._panes = None
         self._tracker = tracker
+        self._caption_was_live = False
+        self._followup_until = 0.0
+        self._next_followup_scan = 0.0
 
     def reset(self) -> None:
         self._panes = None
+        self._caption_was_live = False
+        self._followup_until = 0.0
+        self._next_followup_scan = 0.0
 
     def read(self, link) -> Optional[Hashable]:
         # Back on the tower means the epilogue is over.
@@ -1282,6 +1291,22 @@ class ResultProbe(Probe):
             return None
         if self._panes is None:
             self._panes = self._tracker.pane_index(link)
+        now = time.monotonic()
+        caption_live = self._panes.address(PANE_RESULT_CAPTION) is not None
+        if self._caption_was_live and not caption_live:
+            # Result layouts hand off through a short gap: the feedback panes
+            # are freed before the Perfect/post-medal pane is constructed. A
+            # normal shared-index refresh can land inside that gap and then be
+            # rate-limited for five seconds, long enough to miss this screen.
+            self._followup_until = now + self.FOLLOWUP_SCAN_SECONDS
+            self._next_followup_scan = 0.0
+        self._caption_was_live = caption_live
+
+        if (now < self._followup_until
+                and now >= self._next_followup_scan):
+            self._panes.scan()
+            self._next_followup_scan = now + self.FOLLOWUP_SCAN_INTERVAL
+
         # Every one of these is optional: the epilogue and the Perfect message
         # are different screens, so ask for them all and use whatever is there.
         wanted = ((PANE_RESULT_CAPTION,) + PANE_RESULT_LINES
@@ -1290,6 +1315,8 @@ class ResultProbe(Probe):
         parts = tuple(self._panes.text(name) or "" for name in wanted)
         if not any(parts):
             return None
+        if parts[-2] or parts[-1]:
+            self._followup_until = 0.0
         return parts
 
     def describe(self, previous, current) -> Iterable[Utterance]:
