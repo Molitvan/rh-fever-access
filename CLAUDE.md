@@ -191,6 +191,13 @@ deciding on a gate — or just use `visible()`, which does not care.
 the tutorial bubble; `T_Message_00` is the post-medal message. Different
 screens, one letter apart.
 
+**Tutorials can rotate through numbered panes.** Hole in One retains its first
+line in `T_message_00` and puts the next one in `T_message_01`. For these panes,
+the low bit at name `-1` distinguished the retained line (`0`) from the current
+one (`1`). `TutorialProbe` checks `T_message_00`–`03` and requires exactly one
+non-empty pane with that bit set before speaking. This flag is only verified for
+the tutorial layout; do not treat it as a general NW4R visibility signal yet.
+
 **Share the pane index.** Every probe must take its `PaneIndex` from
 `ScreenTracker.pane_index()`. A sweep costs ~0.14s and a probe sweeps whenever a
 pane it wants is absent, which is most of the time. Four probes with their own

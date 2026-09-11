@@ -745,9 +745,18 @@ class TitleScreenProbe(Probe):
 
 
 # In-game tutorial speech bubbles ("Ookii! (See what I do, then copy it!)").
-# Advancing the tutorial replaces the text in this one pane, so speaking on
-# change follows the whole sequence.
-PANE_TUTORIAL = "T_message_00"
+# Some tutorials use several numbered panes rather than replacing one pane's
+# text. Hole in One, for example, leaves its first line in T_message_00 and
+# moves the follow-up to T_message_01. Reading only the first pane therefore
+# returns the same snapshot forever and the engine correctly says nothing.
+PANE_TUTORIALS = tuple(f"T_message_0{i}" for i in range(4))
+
+# The low bit immediately before a tutorial pane's name tracks whether that
+# pane is selected for display. Verified on Hole in One's Continue/Quit prompt:
+# T_message_00 retained the earlier text with 0 here while T_message_01 held
+# the current text with 1. Keep this local to the tutorial until it has been
+# verified as a general NW4R visibility property.
+TUTORIAL_DISPLAY_FLAG_OFFSET = -1
 
 
 class TutorialProbe(Probe):
@@ -776,15 +785,30 @@ class TutorialProbe(Probe):
             return None
         if self._panes is None:
             self._panes = self._tracker.pane_index(link)
-        if not self._panes.ensure([PANE_TUTORIAL]):
+        # A layout may keep old lines in earlier numbered panes, so text being
+        # present is not enough. Require exactly one non-empty pane whose
+        # display flag is active; ambiguity must remain silent.
+        self._panes.ensure(PANE_TUTORIALS)
+        active = []
+        for name in PANE_TUTORIALS:
+            address = self._panes.address(name)
+            if address is None:
+                continue
+            text = self._panes.text(name)
+            if not text:
+                continue
+            flag = link.u8(address + TUTORIAL_DISPLAY_FLAG_OFFSET)
+            if flag is None:
+                return None
+            if flag & 1:
+                active.append((name, text))
+        if len(active) != 1:
             return None
-        text = self._panes.text(PANE_TUTORIAL)
-        if not text:
-            return None
-        return text
+        return active[0]
 
     def describe(self, previous, current) -> Iterable[Utterance]:
-        return [Utterance(current, interrupt=True, priority=7)]
+        _pane, text = current
+        return [Utterance(text, interrupt=True, priority=7)]
 
 
 # The epilogue shown after finishing a game: a caption and one or two lines of

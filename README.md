@@ -19,8 +19,10 @@ Working today:
   a little Simian Says on the tambourine?"*
 - **Save file select** — *"File 1. Flow 89. 16 medals."* / *"File 2. New game."*
 - **Tutorial bubbles** — *"Ookii! (See what I do, then copy it!)"*, following the
-  sequence as you advance it. Gameplay itself has no text panes at all, so this is the
-  only text the game shows once a game begins.
+  sequence across `T_message_00`–`03` as you advance it. Earlier numbered panes
+  can retain old lines, so the active pane is corroborated with its layout display
+  flag. Gameplay itself has no text panes at all, so this is the only text the game
+  shows once a game begins.
 - **Set changes** — left/right jump a whole set, so those announce *"Set 2. Fork
   Lifter"*; moving within a set just names the game.
 - **The game menu's buttons** — *"Two Player"*, *"Back"* (the option that leaves
