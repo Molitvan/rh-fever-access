@@ -134,6 +134,16 @@ the same entry, so they are separated by *timing* — a card opens straight off
 the grid, an epilogue can only follow a game. That is a heuristic and is
 labelled as one in `ScreenTracker`. Everything else above is structural.
 
+Result ranks are artwork, not text. The result layout exposes the mutually
+exclusive containers `N_HI_00` (Superb), `N_OK_00` (OK), and `N_NG_00` (Try
+Again), plus `N_Medal_00`. On a verified Superb-with-medal screen, the low flag
+bit at name `-1` was set for `N_HI_00` and `N_Medal_00`, and clear for the other
+two ranks. `ResultRankProbe` locates all four names at runtime, follows their
+NW4R parent chains, and accepts only objects sharing the visible
+`T_Caption_00` pane's `RootPane`; never hardcode the observed heap addresses.
+It requires exactly one active rank and queues the rank after `ResultProbe`'s
+feedback rather than interrupting it.
+
 ## Reading on-screen text (start here for any new screen)
 
 The UI is NW4R layouts. Every text box is an object holding its own ASCII pane

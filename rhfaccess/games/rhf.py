@@ -1108,6 +1108,136 @@ class TutorialProbe(Probe):
 PANE_RESULT_CAPTION = "T_Caption_00"
 PANE_RESULT_LINES = ("T_Comment_00", "T_Comment_01")
 
+# The result grade is drawn as artwork, not text. These are the three sibling
+# containers in the result layout; exactly one has its NW4R display flag set.
+# N_HI_00 was verified against an on-screen Superb result, while N_OK_00 and
+# N_NG_00 are the layout's exhaustive alternatives (OK and Try Again).
+RESULT_RANK_PANES = {
+    "N_HI_00": "Superb",
+    "N_OK_00": "OK",
+    "N_NG_00": "Try Again",
+}
+PANE_RESULT_MEDAL = "N_Medal_00"
+RESULT_ARTWORK_PANES = tuple(RESULT_RANK_PANES) + (PANE_RESULT_MEDAL,)
+
+# NW4R pane objects carry their name at this offset and their parent pointer
+# near the beginning of the object. Matching the result text pane's RootPane
+# keeps serialized copies and abandoned layouts from masquerading as the live
+# artwork shown beside that text.
+NW4R_PANE_NAME_OFFSET = 0xBC
+NW4R_PANE_PARENT_OFFSET = 0x0C
+NW4R_PANE_TYPE_OFFSET = -2
+NW4R_PANE_FLAG_OFFSET = -1
+NW4R_ROOT_NAME = "RootPane"
+
+
+class _ResultArtwork:
+    """Locate rank artwork belonging to the currently visible result layout."""
+
+    def __init__(self) -> None:
+        self._addresses: Dict[str, int] = {}
+        self._generation = -1
+
+    def reset(self) -> None:
+        self._addresses = {}
+        self._generation = -1
+
+    @staticmethod
+    def _root(link, name_address: int) -> Optional[int]:
+        obj = name_address - NW4R_PANE_NAME_OFFSET
+        for _ in range(8):
+            # Runtime pane objects point at code in MEM1. Resource records with
+            # the same ASCII name do not form this object/parent chain.
+            vtable = link.u32(obj)
+            if vtable is None or not (0x80000000 <= vtable < 0x81800000):
+                return None
+            name = link.cstring(obj + NW4R_PANE_NAME_OFFSET,
+                                MAX_NAME_LENGTH, "ascii")
+            if name == NW4R_ROOT_NAME:
+                return obj
+            obj = link.pointer(obj + NW4R_PANE_PARENT_OFFSET)
+            if obj is None:
+                return None
+        return None
+
+    def _valid(self, link, name: str, address: int, root: int) -> bool:
+        return (
+            link.cstring(address, MAX_NAME_LENGTH, "ascii") == name
+            and link.u8(address + NW4R_PANE_TYPE_OFFSET) == 0x04
+            and self._root(link, address) == root
+        )
+
+    def _locate(self, link, root: int) -> bool:
+        generation = getattr(link, "generation", 0)
+        if generation != self._generation:
+            self._generation = generation
+            self._addresses = {}
+
+        if (len(self._addresses) == len(RESULT_ARTWORK_PANES)
+                and all(self._valid(link, name, self._addresses[name], root)
+                        for name in RESULT_ARTWORK_PANES)):
+            return True
+        self._addresses = {}
+
+        targets = {
+            name: name.encode("ascii") + b"\x00"
+            for name in RESULT_ARTWORK_PANES
+        }
+        matches = {name: [] for name in RESULT_ARTWORK_PANES}
+        address = panes.MEM2_START
+        end = panes.MEM2_START + min(panes.MEM2_SIZE, link.mem2_extent())
+        overlap = max(len(target) for target in targets.values()) - 1
+        tail = b""
+        tail_address = address
+        complete = True
+
+        while address < end:
+            block = link.read(address, min(panes.CHUNK, end - address))
+            if not block:
+                complete = False
+                address += panes.CHUNK
+                tail = b""
+                continue
+            data = tail + block
+            base = tail_address if tail else address
+            for name, target in targets.items():
+                offset = data.find(target)
+                while offset != -1:
+                    hit = base + offset
+                    if (hit % 4 == 0
+                            and self._valid(link, name, hit, root)):
+                        matches[name].append(hit)
+                    offset = data.find(target, offset + 1)
+            tail = block[-overlap:]
+            tail_address = address + len(block) - overlap
+            address += panes.CHUNK
+
+        if not complete or any(len(found) != 1 for found in matches.values()):
+            return False
+        self._addresses = {name: found[0] for name, found in matches.items()}
+        return True
+
+    def read(self, link, caption_address: int) -> Optional[Hashable]:
+        root = self._root(link, caption_address)
+        if root is None or not self._locate(link, root):
+            return None
+
+        active = []
+        for name, label in RESULT_RANK_PANES.items():
+            flag = link.u8(self._addresses[name] + NW4R_PANE_FLAG_OFFSET)
+            if flag is None:
+                return None
+            if flag & 1:
+                active.append(label)
+        if len(active) != 1:
+            return None
+
+        medal_flag = link.u8(
+            self._addresses[PANE_RESULT_MEDAL] + NW4R_PANE_FLAG_OFFSET)
+        if medal_flag is None:
+            return None
+        return (active[0], bool(medal_flag & 1))
+
 # Earning a Perfect puts its own message on screen, and on that screen the
 # epilogue panes are empty — so the two arrive separately and either may be
 # the only one with text:
@@ -1165,6 +1295,51 @@ class ResultProbe(Probe):
     def describe(self, previous, current) -> Iterable[Utterance]:
         text = ". ".join(part for part in current if part)
         return [Utterance(text, interrupt=True, priority=8)]
+
+
+class ResultRankProbe(Probe):
+    """Reads the mutually exclusive artwork used for the result rank."""
+
+    name = "result_rank"
+    interval = 0.1
+    stable_ticks = 2
+    forget_after = 20
+
+    def __init__(self, tracker: "ScreenTracker") -> None:
+        self._panes = None
+        self._tracker = tracker
+        self._artwork = _ResultArtwork()
+
+    def reset(self) -> None:
+        self._panes = None
+        self._artwork.reset()
+
+    def read(self, link) -> Optional[Hashable]:
+        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            return None
+        if self._tracker.since_grid() < ScreenTracker.RESULT_MIN_GAP:
+            return None
+        if self._panes is None:
+            self._panes = self._tracker.pane_index(link)
+        self._panes.ensure((PANE_RESULT_CAPTION,))
+        caption_address = self._panes.address(PANE_RESULT_CAPTION)
+        # The caption ties the artwork to a visible epilogue. Rank objects can
+        # remain resident after leaving this screen, so their flags alone are
+        # not sufficient evidence that the player is looking at a result.
+        if (caption_address is None
+                or not self._panes.text(PANE_RESULT_CAPTION)
+                or not self._panes.visible(PANE_RESULT_CAPTION)):
+            return None
+        return self._artwork.read(link, caption_address)
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        rank, medal = current
+        text = f"Rank: {rank}."
+        if medal:
+            text += " You got a medal."
+        # The feedback probe speaks first in the same poll; do not interrupt
+        # it, because the rank is the natural conclusion to that feedback.
+        return [Utterance(text, interrupt=False, priority=7)]
 
 
 # The "Notice!" dialog offering a Perfect attempt:
@@ -1478,6 +1653,7 @@ def build_probes() -> List[Probe]:
                            FileSelectProbe(tracker), SaveLabelProbe(tracker),
                            SaveConfirmProbe(tracker),
                            TutorialProbe(tracker), ResultProbe(tracker),
+                           ResultRankProbe(tracker),
                            NoticeProbe(tracker), CafeTalkProbe(tracker)]
     probes.extend(WatchProbe(w) for w in WATCHES)
     return probes

@@ -38,6 +38,11 @@ Working today:
   below), which means the labels are the game's rather than ours.
 - **Post-game epilogue** — *"Scientific Findings. They sure were lively little
   creatures! ...And their color trails were so vibrant!"*
+- **Result rank** — announces *"Rank: Try Again"*, *"Rank: OK"*, or *"Rank:
+  Superb"* after the feedback. If the result also awards a medal, it follows
+  with *"You got a medal."* The rank and medal are artwork, so these are read
+  from the live result layout's mutually exclusive display flags rather than
+  from text.
 - **Perfect rewards** — *"'Figure Fighter' You've earned a gift! Listen to it at the
   café! There are now 47 gifts left to get. Keep going!"* (pane `T_pft_00`; on that
   screen the epilogue panes are empty, so the two arrive separately)
@@ -63,8 +68,11 @@ straight off the grid (`< 3s` since the grid was active), while an epilogue can 
 follow a game, which takes longer than that (`> 5s`). It is a heuristic, and it is
 written down as one in `ScreenTracker`.
 
-The **rank** (Try Again / OK / Superb) is *not* covered — it appears to be artwork
-rather than text, and no rank pane showed up in a sweep of the epilogue screen.
+The **rank** is artwork rather than text. Its result layout contains the sibling
+containers `N_HI_00`, `N_OK_00`, and `N_NG_00`; exactly one has its display flag
+set. The medal has its own `N_Medal_00` container. `ResultRankProbe` locates those
+objects by name at runtime and requires them to share the visible caption's
+`RootPane`, avoiding both serialized copies and stale result layouts.
 
 ### Reading on-screen text in general
 
