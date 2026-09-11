@@ -18,16 +18,17 @@ also why "it looks right" is never sufficient evidence here.
 
 ## Environment
 
-Windows, Python 3.12. `pip install -r requirements.txt` (dolphin-memory-engine,
-cytolk, numpy; Pillow is needed for `tools/sweep.py`).
+Windows, Python 3.12, managed with uv. `uv sync` creates the environment and
+installs the locked runtime dependencies plus the development tools (including
+Pillow for `tools/sweep.py`).
 
 ```
-python run.py                     # the companion; --no-speech for console only
-python tools/diag.py              # can it see the game at all? run this first when wrong
-python tools/panes_dump.py        # every live text pane — start here for a new screen
-python tools/trace.py 300         # watch state + panes change; start before booting
-python tools/step.py auto 12 S W  # automated memory scan (see below)
-python tools/sweep.py             # drive the menu, log + screenshot each stop
+uv run rhf-access                # the companion; --no-speech for console only
+uv run python tools/diag.py       # can it see the game at all? run this first when wrong
+uv run python tools/panes_dump.py # every live text pane — start here for a new screen
+uv run python tools/trace.py 300  # watch state + panes change; start before booting
+uv run python tools/step.py auto 12 S W  # automated memory scan (see below)
+uv run python tools/sweep.py      # drive the menu, log + screenshot each stop
 ```
 
 `trace.py` is the tool for "why is this screen silent": it logs the index, the

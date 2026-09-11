@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """Read-only trace of the state the screen probes gate on. Sends no input.
 
-    python tools/trace.py            # wait for a boot, then trace 5 minutes
-    python tools/trace.py 600        # trace for 10 minutes instead
-    python tools/trace.py 300 my.log # and choose where the log goes
+    uv run python tools/trace.py            # wait for a boot, then trace 5 minutes
+    uv run python tools/trace.py 600        # trace for 10 minutes instead
+    uv run python tools/trace.py 300 my.log # and choose where the log goes
 
 Start this *before* booting the game. It waits for Dolphin to have a disc
 loaded and then records, with timestamps:

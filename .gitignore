@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+.venv/
 .scanstate.pkl
 candidates.txt
 tools/sweep_out/

@@ -3,7 +3,7 @@
 
 Run this first when the companion is connected but wrong or silent.
 
-    python tools/diag.py
+    uv run python tools/diag.py
 
 Being hooked and being able to read are different things, and the difference is
 invisible by ear. MEM1 reaches Dolphin through dolphin-memory-engine, so the

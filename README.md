@@ -243,7 +243,7 @@ anything that has not been verified.
 
 ### When it is connected but wrong
 
-Run `python tools/diag.py`. It answers the one question no amount of listening
+Run `uv run python tools/diag.py`. It answers the one question no amount of listening
 can: whether the companion can actually read the game.
 
 Being hooked and being able to see are not the same thing. MEM1 reaches Dolphin
@@ -279,19 +279,28 @@ at a fixed screen position, so a fixed crop will miss it.
 
 ## Install
 
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run:
+
+```powershell
+uv sync
 ```
-pip install -r requirements.txt
-```
+
+The project pins Python 3.12 in `.python-version`; uv will create `.venv` and
+install the exact versions recorded in `uv.lock`. The default development group
+also installs Pillow for the screenshot tools. Use `uv sync --no-dev` for the
+runtime dependencies only.
 
 ## Run
 
 Start Dolphin, boot Rhythm Heaven Fever, then:
 
-```
-python run.py
+```powershell
+uv run rhf-access
 ```
 
 Options: `--hz 30` (poll rate), `--no-speech` (console only), `--quiet` (no console echo).
+
+`uv run python run.py` remains available as a convenience launcher.
 
 **Run only one copy.** Each instance speaks independently, so two of them talk over
 each other — and because Python loads the code at startup, an instance left running
@@ -342,7 +351,7 @@ Dolphin (its keyboard device is DirectInput, so virtual key codes are ignored), 
 `step.py auto` uses that to run a **return-to-origin** scan:
 
 ```
-python tools/step.py auto 12 S W 0.45 --mem2
+uv run python tools/step.py auto 12 S W 0.45 --mem2
 ```
 
 Each cycle presses Down and requires the value to *change*, then presses Up and requires
@@ -361,12 +370,12 @@ Manual stepping still exists when you need it — `step.py` takes one operation 
 you can move the cursor between steps:
 
 ```
-python tools/step.py new u32
-python tools/step.py changed        # after moving
-python tools/step.py hold 8 2       # holds still across 8 samples, not 2
-python tools/step.py list
-python tools/step.py drive 4 S W    # step the cursor, print every candidate
-python tools/step.py track 20 30    # rank candidates by how index-like they behave
+uv run python tools/step.py new u32
+uv run python tools/step.py changed        # after moving
+uv run python tools/step.py hold 8 2       # holds still across 8 samples, not 2
+uv run python tools/step.py list
+uv run python tools/step.py drive 4 S W    # step the cursor, print every candidate
+uv run python tools/step.py track 20 30    # rank candidates by how index-like they behave
 ```
 
 Then reboot the game and re-check the address. Wii titles load at fixed addresses far

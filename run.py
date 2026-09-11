@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Convenience launcher: `python run.py`"""
+"""Convenience launcher: `uv run python run.py`."""
 
 import sys
 

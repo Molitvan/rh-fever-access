@@ -5,12 +5,12 @@
 cursor and the person running the filter are taking turns, so this stores the
 scan state on disk and applies exactly one operation per run.
 
-    python tools/step.py new            # take the baseline
+    uv run python tools/step.py new            # take the baseline
     (player moves the cursor)
-    python tools/step.py changed        # keep only what moved
+    uv run python tools/step.py changed        # keep only what moved
     (player sits still)
-    python tools/step.py unchanged      # kill the animation/timer churn
-    python tools/step.py list
+    uv run python tools/step.py unchanged      # kill the animation/timer churn
+    uv run python tools/step.py list
 
 State lives next to the repo in .scanstate.pkl unless --state says otherwise.
 Read-only with respect to the game: this never writes emulated memory.

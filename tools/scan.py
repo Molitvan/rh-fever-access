@@ -6,7 +6,7 @@ be pasted straight into a Watch. It never writes to emulated memory.
 
 Typical session for "which entry is the cursor on?":
 
-    python tools/scan.py
+    uv run python tools/scan.py
     > type u8
     > new                 # start with every byte in MEM1 as a candidate
     (move the cursor down one entry in the game)

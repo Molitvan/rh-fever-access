@@ -11,8 +11,8 @@ the screen. So: step the cursor, and at every stop record
 Reading the PNGs back gives the real index -> name table, which is both the
 answer and the yardstick for any memory field that claims to encode it.
 
-    python tools/sweep.py                 # walk the current row both ways
-    python tools/sweep.py --keys S,S,S,D  # or drive an explicit key sequence
+    uv run python tools/sweep.py                 # walk the current row both ways
+    uv run python tools/sweep.py --keys S,S,S,D  # or drive an explicit key sequence
 
 Output goes to tools/sweep_out/ by default: shot_NN.png plus sweep.tsv.
 """

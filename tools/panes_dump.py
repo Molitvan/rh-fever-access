@@ -4,9 +4,9 @@
 This is the first thing to run when adding support for a new screen: it shows
 what text the screen exposes and, crucially, the pane names to ask for.
 
-    python tools/panes_dump.py                 # list panes
-    python tools/panes_dump.py --shot out.png  # and capture the frame
-    python tools/panes_dump.py --watch 20      # re-dump on change for 20s
+    uv run python tools/panes_dump.py                 # list panes
+    uv run python tools/panes_dump.py --shot out.png  # and capture the frame
+    uv run python tools/panes_dump.py --watch 20      # re-dump on change for 20s
 
 Remember that panes keep their last string after their screen closes, so a
 listing always contains stale entries from earlier screens. Compare two dumps,

@@ -1,0 +1,26 @@
+[project]
+name = "rh-fever-access"
+version = "0.1.0"
+description = "External accessibility companion for Rhythm Heaven Fever running in Dolphin"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "cytolk>=0.1.8",
+    "dolphin-memory-engine>=1.2.0",
+    "numpy>=1.24",
+]
+
+[project.scripts]
+rhf-access = "rhfaccess.app:main"
+
+[dependency-groups]
+dev = [
+    "pillow>=10.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["rhfaccess"]

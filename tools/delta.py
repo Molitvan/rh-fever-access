@@ -5,9 +5,9 @@ A counter like Flow moves by a few points per game. Almost everything else that
 survives a "changed after every game" filter is a timer, a frame count or RNG,
 which jumps by huge amounts. Comparing deltas separates them in one step.
 
-    python tools/delta.py snap                 # record current values
+    uv run python tools/delta.py snap                 # record current values
     (play a game)
-    python tools/delta.py cmp --max-delta 15   # keep small movers
+    uv run python tools/delta.py cmp --max-delta 15   # keep small movers
 
 Works on whatever candidate list step.py currently holds.
 """
