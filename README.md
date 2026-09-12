@@ -62,6 +62,9 @@ Working today:
 - **Unlock notices** — *"Notice! You unlocked Rhythm Toys! Collect medals to
   play with more toys. Press A!"* These use parallel `_01` and `_02` notice
   layouts; the probe requires exactly one visible, nonempty body.
+- **Menu information dialogs** — reads the two-player explanation and controller
+  prompts from `T_RemoteMsg_00`, followed by the visible close instruction from
+  `T_RCloseMsg_00`.
 - **Café barista** — the whole conversation, line by line: *"Recently, a friend let
   me mess around a bit on his guitar."* … *"See you around."* One pane replaced per
   line, gated on the dialogue box's alpha so the line it keeps afterwards is not

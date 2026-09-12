@@ -57,7 +57,10 @@ class GameIdentityProbe(Probe):
         game_id, title = current
         known = GAME_IDS.get(game_id)
         if known:
-            return [Utterance(f"{known} detected.", interrupt=True, priority=10)]
+            # Startup screen text may confirm sooner than this probe's second
+            # half-second identity sample. Detection is useful status, but it
+            # must not cut off a dialog that is already being read.
+            return [Utterance(f"{known} detected.", interrupt=False, priority=10)]
         label = title or game_id
         return [Utterance(
             f"Connected, but this is {label}, not Rhythm Heaven Fever. "
@@ -789,6 +792,14 @@ class GridCursorProbe(Probe):
         return _with_intro(intro, label, priority=5)
 
 
+# Bodies of modal dialogs that can cover a still-selected menu button. These
+# must suppress the underlying button announcement, especially after the
+# companion is restarted while a modal is already open.
+PANE_MODAL_BODIES = (
+    "T_window_00", "T_win_msg_01", "T_win_msg_02", "T_RemoteMsg_00",
+)
+
+
 class MenuButtonProbe(Probe):
     """Speaks the game menu's buttons: Two Player, Back, and the rest of the row.
 
@@ -828,7 +839,13 @@ class MenuButtonProbe(Probe):
             return None
         if self._panes is None:
             self._panes = self._tracker.pane_index(link)
-        self._panes.ensure([pane])
+        self._panes.ensure((pane,) + PANE_MODAL_BODIES)
+        for modal_name in PANE_MODAL_BODIES:
+            for address in self._panes.addresses(modal_name):
+                alpha = link.u8(address + panes.ALPHA_OFFSET)
+                if (self._panes.text_at(address) and alpha is not None
+                        and alpha >= panes.VISIBLE_ALPHA):
+                    return None
         text = self._panes.text(pane)
         if not text:
             return None
@@ -1440,6 +1457,57 @@ class NoticeProbe(Probe):
         return [Utterance(text, interrupt=True, priority=9)]
 
 
+# Modal information shown over menus, including the two-player explanation and
+# controller-pairing instructions. These panes stay resident and change text,
+# so their effective alpha — not text presence — says whether the modal is up.
+PANE_REMOTE_MESSAGE = "T_RemoteMsg_00"
+PANE_REMOTE_PROMPT = "T_RCloseMsg_00"
+
+
+class RemoteMessageProbe(Probe):
+    """Reads the visible menu modal and its close/back instruction."""
+
+    name = "remote_message"
+    interval = 0.1
+    stable_ticks = 2
+    forget_after = 20
+
+    def __init__(self, tracker: "ScreenTracker") -> None:
+        self._panes = None
+        self._tracker = tracker
+
+    def reset(self) -> None:
+        self._panes = None
+
+    def _visible_text(self, link, name: str) -> Optional[str]:
+        active = []
+        for address in self._panes.addresses(name):
+            text = self._panes.text_at(address)
+            alpha = link.u8(address + panes.ALPHA_OFFSET)
+            if text and alpha is not None and alpha >= panes.VISIBLE_ALPHA:
+                active.append(text)
+        if len(active) != 1:
+            return None
+        return active[0]
+
+    def read(self, link) -> Optional[Hashable]:
+        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            return None
+        if self._panes is None:
+            self._panes = self._tracker.pane_index(link)
+        self._panes.ensure((PANE_REMOTE_MESSAGE, PANE_REMOTE_PROMPT))
+        body = self._visible_text(link, PANE_REMOTE_MESSAGE)
+        if not body:
+            return None
+        prompt = self._visible_text(link, PANE_REMOTE_PROMPT) or ""
+        return (body, prompt)
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        body, prompt = current
+        text = " ".join(part for part in (body, prompt) if part)
+        return [Utterance(text, interrupt=True, priority=9)]
+
+
 # The cafe's dialogue box. One pane, replaced line by line as the conversation
 # is advanced, so speaking on change follows the whole exchange — the same shape
 # as the tutorial bubbles.
@@ -1708,6 +1776,7 @@ def build_probes() -> List[Probe]:
                            SaveConfirmProbe(tracker),
                            TutorialProbe(tracker), ResultProbe(tracker),
                            ResultRankProbe(tracker),
-                           NoticeProbe(tracker), CafeTalkProbe(tracker)]
+                           NoticeProbe(tracker), RemoteMessageProbe(tracker),
+                           CafeTalkProbe(tracker)]
     probes.extend(WatchProbe(w) for w in WATCHES)
     return probes

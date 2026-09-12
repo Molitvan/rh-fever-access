@@ -229,6 +229,13 @@ On the Rhythm Toys unlock, `_01` held the visible text while `_02` was resident,
 transparent and empty. `NoticeProbe` checks every set and requires exactly one
 visible, nonempty body before speaking.
 
+The large modal used by the two-player menu is separate again:
+`T_RemoteMsg_00` holds its body and `T_RCloseMsg_00` its prompt. Both retain
+other controller-related strings when not shown, so `RemoteMessageProbe`
+requires visible alpha. A modal can cover a still-selected menu button;
+`MenuButtonProbe` checks visible modal bodies and stays silent so the underlying
+button cannot interrupt the dialog, particularly after a companion restart.
+
 **Pane names are case sensitive and the game reuses words.** `T_message_00` is
 the tutorial bubble; `T_Message_00` is the post-medal message. Different
 screens, one letter apart.
