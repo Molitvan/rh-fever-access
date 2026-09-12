@@ -112,6 +112,12 @@ or the file select. Everything behind `0xFF` needs a second signal:
 | title screen | `0xFF` or `0x00` | `0xFF` or `0x00` | sentinel, or null on boot | **0** |
 | file select | `0xFF` | `0xFF` | sentinel | 28 |
 
+Zero text panes is not enough to identify the title: the Wii safety screen also
+has none and no selection. `TitleScreenProbe` locates the artwork group
+`N_logo_all_00` at runtime and requires visible alpha plus the low display bit
+on it and every ancestor through its `RootPane`. This is the positive title
+marker and avoids hardcoding its heap address.
+
 The new-save label picker reuses that resident file layout, so the file panes
 alone misidentify it as File 1. Its fifteen labels are artwork, but its live
 `N_cursor_frm_00` pane moves to the transform of `N_name_00`–`14`. Locate that

@@ -156,10 +156,10 @@ title screen and the file select never spoke at all. Nor did they on any later
 visit: the flags were cleared only by a Dolphin disconnect, and both screens
 come back if you leave the menu by its Back button.
 
-Both latches are gone. The title screen is now separated from a game in
-progress — which also has zero text panes — by `no_selection()`, and the file
-select from the game menu by which panes are live. Neither screen is
-once-per-boot, and nothing assumes it is.
+Both latches are gone. The title screen is separated from gameplay by
+`no_selection()` and from the equally empty Wii safety screen by its displayed
+title-logo pane hierarchy. File select uses a valid slot plus its visible
+prompt. Neither screen is once-per-boot, and nothing assumes it is.
 
 ### Reading the button row
 
@@ -218,10 +218,11 @@ is authored rather than read from the game, the same compromise as the extras la
 It is justified here because staying silent leaves a blind player with no way to know
 what to press.
 
-Its detector is the weakest thing in the project: "a full pane sweep found nothing".
-That is distinctive today (every other screen exposes 20+ panes) but the boot logos
-presumably also have none, so it may announce early. The probe switches itself off for
-good as soon as any other screen appears, so the sweep only runs for a few seconds.
+The absence of text is not the detector: the Wii safety screen has no text panes
+either. The probe locates the title artwork's runtime `N_logo_all_00` pane and verifies
+that it and every ancestor through its `RootPane` have visible alpha and their display
+bit set. Combined with the lack of a selected menu item, this distinguishes the real
+title screen from the safety screen without using a heap address.
 
 ### Heap addresses are reproducible
 

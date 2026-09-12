@@ -1187,12 +1187,90 @@ class InfoCardProbe(Probe):
 # read from the game. It is the one place where staying silent would leave a
 # blind player with no way to know what to press.
 TITLE_ANNOUNCEMENT = ("Rhythm Heaven Fever, title screen. "
-                      "Hold the Wii Remote sideways and press A and B together "
-                      "to continue.")
+                      "Press A and B together to continue.")
+PANE_TITLE_LOGO = "N_logo_all_00"
+
+
+class _TitleMarker:
+    """Locate the displayed title-logo group without caching a heap address."""
+
+    def __init__(self) -> None:
+        self._address: Optional[int] = None
+        self._generation = -1
+
+    def reset(self) -> None:
+        self._address = None
+        self._generation = -1
+
+    @staticmethod
+    def _visible(link, address: int) -> bool:
+        obj = address - PANE_NAME_OFFSET
+        for depth in range(8):
+            name_address = obj + PANE_NAME_OFFSET
+            if link.u8(name_address - 2) != 0x04:
+                return False
+            vtable = link.u32(obj)
+            if vtable is None or not (0x80000000 <= vtable < 0x81800000):
+                return False
+            name = link.cstring(name_address, MAX_PANE_NAME, "ascii")
+            if depth == 0 and name != PANE_TITLE_LOGO:
+                return False
+            alpha = link.u8(name_address + panes.ALPHA_OFFSET)
+            flags = link.u8(name_address - 1)
+            if (alpha is None or alpha < panes.VISIBLE_ALPHA
+                    or flags is None or not (flags & 0x01)):
+                return False
+            parent = link.pointer(obj + 0x0C)
+            if name == "RootPane":
+                return parent is None
+            if parent is None:
+                return False
+            obj = parent
+        return False
+
+    def present(self, link) -> bool:
+        generation = getattr(link, "generation", 0)
+        if generation != self._generation:
+            self._generation = generation
+            self._address = None
+        if self._address is not None and self._visible(link, self._address):
+            return True
+        self._address = None
+
+        target = PANE_TITLE_LOGO.encode("ascii") + b"\x00"
+        matches = []
+        address = panes.MEM2_START
+        end = panes.MEM2_START + min(panes.MEM2_SIZE, link.mem2_extent())
+        tail = b""
+        tail_address = address
+        overlap = len(target) - 1
+        complete = True
+        while address < end:
+            block = link.read(address, min(panes.CHUNK, end - address))
+            if not block:
+                complete = False
+                address += panes.CHUNK
+                tail = b""
+                continue
+            data = tail + block
+            base = tail_address if tail else address
+            offset = data.find(target)
+            while offset != -1:
+                hit = base + offset
+                if hit % 4 == 0 and self._visible(link, hit):
+                    matches.append(hit)
+                offset = data.find(target, offset + 1)
+            tail = block[-overlap:]
+            tail_address = address + len(block) - overlap
+            address += panes.CHUNK
+        if not complete or len(matches) != 1:
+            return False
+        self._address = matches[0]
+        return True
 
 
 class TitleScreenProbe(Probe):
-    """Announces the title screen, detected by it having no text panes at all.
+    """Announces the title screen from its displayed artwork hierarchy.
 
     Every other menu screen exposes at least twenty — but a game in progress
     exposes none either, so the sweep alone cannot tell those two apart.
@@ -1206,13 +1284,11 @@ class TitleScreenProbe(Probe):
     disconnect. Whatever replaces that flag has to survive going back to the
     title screen from the menu, which is a thing players do.
 
-    The sweep is expensive, so it is rate-limited and only ever runs once the
-    cheap check above has already passed — which it does not during a game or
-    anywhere in the menu.
-
-    UNVERIFIED: the boot logos have no text panes and no selection either, so
-    this announces during them, a few seconds before the title screen is
-    actually up. That is the pre-existing compromise, now reached sooner.
+    The Wii safety screen also has no text panes and no selection. The title
+    logo's live `N_logo_all_00` hierarchy is therefore the positive marker;
+    every pane through its RootPane must have visible alpha and its display bit.
+    Runtime discovery is rate-limited and only attempted after the cheap
+    no-selection check passes.
     """
 
     name = "title_screen"
@@ -1220,13 +1296,13 @@ class TitleScreenProbe(Probe):
     stable_ticks = 1
 
     def __init__(self, tracker: "ScreenTracker") -> None:
-        self._panes = None
         self._tracker = tracker
         self._next_scan = 0.0
+        self._marker = _TitleMarker()
 
     def reset(self) -> None:
-        self._panes = None
         self._next_scan = 0.0
+        self._marker.reset()
 
     def read(self, link) -> Optional[Hashable]:
         if not no_selection(link):
@@ -1237,15 +1313,7 @@ class TitleScreenProbe(Probe):
             return None
         self._next_scan = now + 2.0
 
-        if self._panes is None:
-            self._panes = self._tracker.pane_index(link)
-        found = self._panes.scan()
-        # None is not an empty screen — it is a sweep that could not read MEM2,
-        # and this probe's whole signal is "no text panes anywhere". Treating
-        # the two alike announced the title screen over the button row, the info
-        # card, the file select and the cafe, on any session where the raw MEM2
-        # backend had gone away, while everything that reads text went quiet.
-        if found is None or found:
+        if not self._marker.present(link):
             return None
         self._tracker.enter("title")
         return ("title",)
