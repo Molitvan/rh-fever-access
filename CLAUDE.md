@@ -236,6 +236,13 @@ requires visible alpha. A modal can cover a still-selected menu button;
 `MenuButtonProbe` checks visible modal bodies and stays silent so the underlying
 button cannot interrupt the dialog, particularly after a companion restart.
 
+The gameplay pause overlay exposes `T_pause_msg_00`, whose literal text is only
+`?`, as a reliable visible marker (measured alpha `0xED`). Its localized actions
+are `T_msg_bln_00` = Continue and `T_msg_bln_01` = Quit. The screen's arrows map
+Plus to Continue and Minus to Quit; that mapping is visual and therefore
+authored in `PauseProbe`. Old tutorial panes remain resident on this screen but
+their low display bits are clear.
+
 **Pane names are case sensitive and the game reuses words.** `T_message_00` is
 the tutorial bubble; `T_Message_00` is the post-medal message. Different
 screens, one letter apart.

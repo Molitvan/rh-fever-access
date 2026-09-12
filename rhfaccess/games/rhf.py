@@ -1508,6 +1508,64 @@ class RemoteMessageProbe(Probe):
         return [Utterance(text, interrupt=True, priority=9)]
 
 
+# Gameplay pause overlay. The heading itself is artwork; T_pause_msg_00 holds
+# only "?", but it provides a visible text-pane marker for the overlay. The
+# two balloon panes contain the localized action labels. Their Plus/Minus
+# mapping is conveyed visually by arrows and therefore has to be authored.
+PANE_PAUSE_MARKER = "T_pause_msg_00"
+PANE_PAUSE_CONTINUE = "T_msg_bln_00"
+PANE_PAUSE_QUIT = "T_msg_bln_01"
+
+
+class PauseProbe(Probe):
+    """Announces the gameplay pause overlay and its direct button actions."""
+
+    name = "pause"
+    interval = 0.1
+    stable_ticks = 2
+    forget_after = 4
+
+    def __init__(self, tracker: "ScreenTracker") -> None:
+        self._panes = None
+        self._tracker = tracker
+
+    def reset(self) -> None:
+        self._panes = None
+
+    def _visible_text(self, link, name: str) -> Optional[str]:
+        active = []
+        for address in self._panes.addresses(name):
+            text = self._panes.text_at(address)
+            alpha = link.u8(address + panes.ALPHA_OFFSET)
+            if text and alpha is not None and alpha >= panes.VISIBLE_ALPHA:
+                active.append(text)
+        if len(active) != 1:
+            return None
+        return active[0]
+
+    def read(self, link) -> Optional[Hashable]:
+        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            return None
+        if self._panes is None:
+            self._panes = self._tracker.pane_index(link)
+        wanted = (PANE_PAUSE_MARKER, PANE_PAUSE_CONTINUE, PANE_PAUSE_QUIT)
+        self._panes.ensure(wanted)
+        marker = self._visible_text(link, PANE_PAUSE_MARKER)
+        if marker != "?":
+            return None
+        continue_label = self._visible_text(link, PANE_PAUSE_CONTINUE)
+        quit_label = self._visible_text(link, PANE_PAUSE_QUIT)
+        if not continue_label or not quit_label:
+            return None
+        return (continue_label, quit_label)
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        continue_label, quit_label = current
+        text = (f"Paused. Press Plus to {continue_label}, or Minus to "
+                f"{quit_label}.")
+        return [Utterance(text, interrupt=True, priority=10)]
+
+
 # The cafe's dialogue box. One pane, replaced line by line as the conversation
 # is advanced, so speaking on change follows the whole exchange — the same shape
 # as the tutorial bubbles.
@@ -1777,6 +1835,6 @@ def build_probes() -> List[Probe]:
                            TutorialProbe(tracker), ResultProbe(tracker),
                            ResultRankProbe(tracker),
                            NoticeProbe(tracker), RemoteMessageProbe(tracker),
-                           CafeTalkProbe(tracker)]
+                           PauseProbe(tracker), CafeTalkProbe(tracker)]
     probes.extend(WatchProbe(w) for w in WATCHES)
     return probes
