@@ -276,6 +276,23 @@ def _ancestor_at(link, name_address: int, ancestor_name: str,
     return False
 
 
+def _ancestor_visible(link, name_address: int, ancestor_name: str) -> bool:
+    """Whether a named runtime ancestor has visible alpha."""
+    obj = name_address - PANE_NAME_OFFSET
+    for _ in range(8):
+        if link.u8(obj + PANE_NAME_OFFSET - 2) != 0x04:
+            return False
+        name_address = obj + PANE_NAME_OFFSET
+        name = link.cstring(name_address, MAX_PANE_NAME, "ascii")
+        if name == ancestor_name:
+            alpha = link.u8(name_address + panes.ALPHA_OFFSET)
+            return alpha is not None and alpha >= panes.VISIBLE_ALPHA
+        obj = link.pointer(obj + 0x0C)
+        if obj is None:
+            return False
+    return False
+
+
 def _has_visible_text(pane_index, link, name: str,
                       ancestor: Optional[tuple] = None) -> bool:
     """True when any live duplicate of a named text pane is being drawn."""
@@ -662,20 +679,32 @@ def selected_pane_name(link) -> Optional[str]:
         return None
 
 
-def selected_button_pane(link) -> Optional[str]:
-    """Text pane holding the label of the selected *button*, or None.
+def selected_button(link) -> Optional[tuple]:
+    """Return the selected button's text-pane name and container address.
 
     None whenever the selection is a tower entry, which is what keeps this
     apart from the info card: the card sits behind the same 0xFF index with the
     pointer still on the game you picked.
     """
-    name = selected_pane_name(link)
+    entry = link.pointer(ADDR_GRID_ENTRY_PTR)
+    if entry is None:
+        return None
+    pane = link.pointer(entry + SELECTION_PANE_OFFSET)
+    if pane is None:
+        return None
+    name = link.cstring(pane + PANE_NAME_OFFSET, MAX_PANE_NAME, "ascii")
     if name is None or TOWER_PANE.match(name):
         return None
     match = CONTAINER_PANE.match(name)
     if match is None:
         return None
-    return "T_" + match.group(1)
+    return ("T_" + match.group(1), pane)
+
+
+def selected_button_pane(link) -> Optional[str]:
+    """Text-pane name for the selected button, or None."""
+    selected = selected_button(link)
+    return None if selected is None else selected[0]
 
 
 def no_selection(link) -> bool:
@@ -776,9 +805,13 @@ class ScreenTracker:
         return self._save_label_cursor.confirmation_selection(link)
 
     def file_action_present(self, link) -> bool:
-        return self._file_action_cursor.present(link)
+        slot = link.u8(ADDR_FILE_SLOT)
+        return (slot is not None and slot < FILE_SLOT_COUNT
+                and self._file_action_cursor.present(link))
 
     def file_action_selection(self, link) -> Optional[str]:
+        if not self.file_action_present(link):
+            return None
         return self._file_action_cursor.selection(link)
 
     def enter(self, name: str, quiet_from: Iterable[str] = ()) -> int:
@@ -1044,23 +1077,37 @@ class MenuButtonProbe(Probe):
         # the file layout uses its own cursor. Let FileActionProbe own it.
         if self._tracker.file_action_present(link):
             return None
-        pane = selected_button_pane(link)
-        if pane is None:
+        selected = selected_button(link)
+        if selected is None:
             return None
+        pane, container = selected
         if self._panes is None:
             self._panes = self._tracker.pane_index(link)
         self._panes.ensure((pane, PANE_FILE_PROMPT) + PANE_MODAL_BODIES)
-        if _has_visible_text(self._panes, link, PANE_FILE_PROMPT):
+        slot = link.u8(ADDR_FILE_SLOT)
+        if (slot is not None and slot < FILE_SLOT_COUNT
+                and _has_visible_text(self._panes, link, PANE_FILE_PROMPT)):
             return None
         for modal_name in PANE_MODAL_BODIES:
             for address in self._panes.addresses(modal_name):
                 alpha = link.u8(address + panes.ALPHA_OFFSET)
                 if (self._panes.text_at(address) and alpha is not None
-                        and alpha >= panes.VISIBLE_ALPHA):
+                        and alpha >= panes.VISIBLE_ALPHA
+                        and (modal_name != PANE_REMOTE_MESSAGE
+                             or _ancestor_visible(link, address,
+                                                  PANE_REMOTE_GROUP))):
                     return None
-        text = self._panes.text(pane)
-        if not text:
+        labels = []
+        for address in self._panes.addresses(pane):
+            obj = address - PANE_NAME_OFFSET
+            alpha = link.u8(address + panes.ALPHA_OFFSET)
+            text = self._panes.text_at(address)
+            if (link.pointer(obj + 0x0C) == container and text
+                    and alpha is not None and alpha >= panes.VISIBLE_ALPHA):
+                labels.append(text)
+        if len(labels) != 1:
             return None
+        text = labels[0]
         self._tracker.enter("button", quiet_from=("grid",))
         return (pane, text)
 
@@ -1674,6 +1721,7 @@ class NoticeProbe(Probe):
 # so their effective alpha — not text presence — says whether the modal is up.
 PANE_REMOTE_MESSAGE = "T_RemoteMsg_00"
 PANE_REMOTE_PROMPT = "T_RCloseMsg_00"
+PANE_REMOTE_GROUP = "W_RemoteFrm_00"
 
 
 class RemoteMessageProbe(Probe):
@@ -1696,7 +1744,8 @@ class RemoteMessageProbe(Probe):
         for address in self._panes.addresses(name):
             text = self._panes.text_at(address)
             alpha = link.u8(address + panes.ALPHA_OFFSET)
-            if text and alpha is not None and alpha >= panes.VISIBLE_ALPHA:
+            if (text and alpha is not None and alpha >= panes.VISIBLE_ALPHA
+                    and _ancestor_visible(link, address, PANE_REMOTE_GROUP)):
                 active.append(text)
         if len(active) != 1:
             return None

@@ -142,7 +142,10 @@ Its `N_cursor_frm_00` shares that group's `RootPane` and lands on Start
 `T_delete_btn_00`, and `T_change_btn_00`. `FileActionProbe` announces the file
 summary once and then the selected action. The ordinary selected-entry pointer
 can retain an unrelated game-menu Back object here, so `MenuButtonProbe` must
-yield whenever the file-action group is on screen.
+yield whenever the file-action group is on screen. Conversely, that group and
+its cursor remain resident after reaching the game menu; `ADDR_FILE_SLOT` is a
+valid 0-based slot on the file-action screen and `0xFF` on the game menu, so the
+cursor detector requires both signals before claiming the screen.
 
 Selecting Delete overlays that action group without hiding or moving its cursor,
 so the action probe still sees Delete underneath. The warning is `T_msg_00` and
@@ -227,10 +230,10 @@ file select used to be identified this way: its own prompt live, and the game
 menu's `T_game_title_00` *not* live. That failed after playing and returning
 through the title screen: the freed card name could remain cached while no
 missing pane forced a new sweep, silencing file select until the companion
-restarted. File select now requires `T_no_data_00` to have visible alpha;
-although the menu keeps that pane resident, it is hidden behind the tower.
-`MenuButtonProbe` uses the same check so the file layout's Back pane cannot
-interrupt the slot reading.
+restarted. File select requires both a valid `ADDR_FILE_SLOT` and visible
+`T_no_data_00`; the prompt can retain alpha 255 behind the game menu, where the
+slot byte is `0xFF`. `MenuButtonProbe` uses the same combined check so the file
+layout's Back pane cannot interrupt the slot reading.
 
 **Menu items are pane-backed, which is how the buttons are read.** The selected
 item's object at `ADDR_GRID_ENTRY_PTR` holds a pane pointer at `+0x04`, and
@@ -241,6 +244,10 @@ so there is no index to look a button up by. Tower entries are pane-backed too
 (`N_game_btn_13`, extras included) but have no matching `T_` pane — their names
 are artwork, which is why `EXTRAS` is hardcoded — and `TOWER_PANE` skips them
 rather than sweeping MEM2 for something that cannot exist.
+Names are reused across resident layouts, so `MenuButtonProbe` accepts only the
+`T_` pane whose parent pointer is the selected `N_` container. On the game-menu
+Back button, three `T_back_btn_00` panes simultaneously held Back, Title Screen,
+and One Player; parent identity selected the visible Title Screen label.
 
 **A pane can also be live while off screen.** The info card's title and
 description track the highlighted game as you scroll the grid, with no card
@@ -262,9 +269,12 @@ visible, nonempty body before speaking.
 The large modal used by the two-player menu is separate again:
 `T_RemoteMsg_00` holds its body and `T_RCloseMsg_00` its prompt. Both retain
 other controller-related strings when not shown, so `RemoteMessageProbe`
-requires visible alpha. A modal can cover a still-selected menu button;
-`MenuButtonProbe` checks visible modal bodies and stays silent so the underlying
-button cannot interrupt the dialog, particularly after a companion restart.
+requires both their visible alpha and visible alpha on ancestor
+`W_RemoteFrm_00`. The children remain at 255 on the ordinary game menu while
+that ancestor is 0. A modal can cover a still-selected menu button;
+`MenuButtonProbe` applies the same effective-visibility check and stays silent
+so the underlying button cannot interrupt the dialog, particularly after a
+companion restart.
 
 The gameplay pause overlay exposes `T_pause_msg_00`, whose literal text is only
 `?`, as a reliable visible marker (measured alpha `0xED`). Its localized actions
