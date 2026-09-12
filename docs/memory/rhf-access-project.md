@@ -10,7 +10,7 @@ metadata:
 
 `rhf-access` is an external accessibility companion for Rhythm Heaven Fever (Wii,
 disc ID SOME01) running in Dolphin. It reads live game state out of Dolphin's
-emulated memory and speaks it through NVDA via Tolk. Dolphin is never patched
+emulated memory and sends it to screen readers through Prism. Dolphin is never patched
 and the disc image is never modified.
 
 Working tree: `C:\Users\adels\Documents\GitHub\rhf-access` (not inside the

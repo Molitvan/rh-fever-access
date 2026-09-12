@@ -38,7 +38,7 @@ def run(poll_hz: float, speak: bool, echo: bool) -> int:
 
     speech = Speech(enabled=speak, echo=echo)
     if speech.available:
-        print(f"Screen reader: {speech.screen_reader or 'unknown (Tolk loaded)'}")
+        print(f"Output backend: {speech.screen_reader or 'unknown'}")
     else:
         print("Screen reader: none — printing to console only.")
 
@@ -98,7 +98,7 @@ def main(argv=None) -> int:
     parser.add_argument("--hz", type=float, default=30.0,
                         help="polls per second (default: 30)")
     parser.add_argument("--no-speech", action="store_true",
-                        help="skip Tolk and print to the console only")
+                        help="skip Prism and print to the console only")
     parser.add_argument("--quiet", action="store_true",
                         help="do not echo spoken lines to the console")
     args = parser.parse_args(argv)

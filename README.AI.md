@@ -4,8 +4,8 @@ An external accessibility companion for **Rhythm Heaven Fever** (Wii) running in
 
 Nothing in Dolphin is patched and nothing in the disc image is modified. The companion
 attaches to Dolphin's emulated RAM from outside, reconstructs what the player is
-currently interacting with from the game's own data structures, and speaks it through
-NVDA via Tolk. Same architecture as the Pokémon Battle Revolution companion — the
+currently interacting with from the game's own data structures, and sends it to screen
+readers through Prism. Same architecture as the Pokémon Battle Revolution companion — the
 emulator is just a window onto live game state.
 
 ## Status
@@ -444,7 +444,7 @@ an address that behaves in `watch` behaves in the companion.
 run.py                     launcher
 rhfaccess/dolphin.py       hooking, reconnect, validated big-endian reads
 rhfaccess/probes.py        confidence-gating engine (stability, dedupe, forgetting)
-rhfaccess/speech.py        Tolk/NVDA output with interrupt policy
+rhfaccess/speech.py        Prism output with interrupt policy
 rhfaccess/games/rhf.py     RHF specifics: game IDs, Watch definitions
 rhfaccess/app.py           poll loop
 tools/scan.py              read-only memory scanner

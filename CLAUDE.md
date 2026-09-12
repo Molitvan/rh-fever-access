@@ -7,7 +7,7 @@ Guidance for Claude Code when working in this repository.
 An external accessibility companion for **Rhythm Heaven Fever** (Wii, disc ID
 `SOME01`) running in Dolphin. It attaches to Dolphin's emulated RAM from
 outside, reconstructs what the player is interacting with from the game's own
-data structures, and speaks it through NVDA via Tolk.
+data structures, and sends it to screen readers through Prism.
 
 **Dolphin is never patched and the disc image is never modified.** If a change
 would require either, it is out of scope.
@@ -47,7 +47,7 @@ cp1252 console encoding.
 | `rhfaccess/dolphin.py` | Hooking, reconnect, validated big-endian reads, pointer chasing |
 | `rhfaccess/rawmem.py` | Direct MEM2 reader (see gotchas) |
 | `rhfaccess/probes.py` | Confidence-gating engine: stability, dedupe, forgetting |
-| `rhfaccess/speech.py` | Tolk/NVDA output, interrupt policy |
+| `rhfaccess/speech.py` | Prism output, interrupt policy |
 | `rhfaccess/games/archive.py` | Runtime locator for the game's DAT1 text archives |
 | `rhfaccess/games/panes.py` | Reads on-screen text by NW4R layout pane name |
 | `rhfaccess/games/rhf.py` | All RHF specifics: addresses, menu layout, probes |

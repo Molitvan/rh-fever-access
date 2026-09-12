@@ -5,9 +5,9 @@ description = "External accessibility companion for Rhythm Heaven Fever running 
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "cytolk>=0.1.8",
     "dolphin-memory-engine>=1.2.0",
     "numpy>=1.24",
+    "prismatoid>=0.18.2",
 ]
 
 [project.scripts]

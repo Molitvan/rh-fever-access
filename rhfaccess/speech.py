@@ -1,4 +1,4 @@
-"""Speech output through NVDA (or any Tolk-supported screen reader).
+"""Speech and braille output through Prism.
 
 Two rules matter for a rhythm game:
 
@@ -15,7 +15,7 @@ import sys
 import time
 from typing import Optional
 
-from cytolk import tolk
+import prism
 
 
 class Speech:
@@ -27,25 +27,28 @@ class Speech:
         self.repeat_suppress_seconds = repeat_suppress_seconds
         self._last_text: Optional[str] = None
         self._last_time = 0.0
-        self._loaded = False
+        self._context: Optional[prism.Context] = None
+        self._backend: Optional[prism.Backend] = None
         self.screen_reader: Optional[str] = None
 
         if enabled:
             try:
-                tolk.load()
-                self._loaded = True
-                reader = tolk.detect_screen_reader()
-                if isinstance(reader, bytes):
-                    reader = reader.decode("utf-8", errors="replace")
-                self.screen_reader = reader or None
-            except Exception as exc:  # Tolk DLLs missing, no reader, etc.
-                print(f"[speech] Tolk unavailable ({exc}); falling back to console.",
+                self._context = prism.Context()
+                self._backend = self._context.acquire_best()
+                if not self._backend.features.supports_output:
+                    raise RuntimeError(
+                        f"{self._backend.name} does not support Prism output"
+                    )
+                self.screen_reader = self._backend.name or None
+            except Exception as exc:
+                print(f"[speech] Prism unavailable ({exc}); falling back to console.",
                       file=sys.stderr)
-                self._loaded = False
+                self._backend = None
+                self._context = None
 
     @property
     def available(self) -> bool:
-        return self._loaded
+        return self._backend is not None
 
     def say(self, text: str, interrupt: bool = False) -> None:
         text = (text or "").strip()
@@ -63,16 +66,16 @@ class Speech:
 
         if self.echo:
             print(text, flush=True)
-        if self._loaded:
+        if self._backend is not None:
             try:
-                tolk.speak(text, interrupt)
+                self._backend.output(text, interrupt=interrupt)
             except Exception as exc:
-                print(f"[speech] speak failed: {exc}", file=sys.stderr)
+                print(f"[speech] output failed: {exc}", file=sys.stderr)
 
     def silence(self) -> None:
-        if self._loaded:
+        if self._backend is not None:
             try:
-                tolk.silence()
+                self._backend.stop()
             except Exception:
                 pass
 
@@ -81,9 +84,10 @@ class Speech:
         self._last_text = None
 
     def close(self) -> None:
-        if self._loaded:
+        if self._backend is not None:
             try:
-                tolk.unload()
+                self._backend.stop()
             except Exception:
                 pass
-            self._loaded = False
+        self._backend = None
+        self._context = None
