@@ -18,7 +18,7 @@ This project is still very much a work in progress. While the main game can alre
 
 ## Installation
 
-Note: you have to have Rhythm Heaven Fever running inside [Dolphin Emulator](https://dolphin-emu.org/) before following this
+Note: you have to have Rhythm Heaven Fever (the US version) running inside [Dolphin Emulator](https://dolphin-emu.org/) before following this
 1. Download and install [Git](https://git-scm.com/install/windows) and [UV](https://docs.astral.sh/uv/getting-started/installation/#__tabbed_1_2). If you're using Windows 11, you can get these two through WinGet (easier method). Open Command Prompt and run this command: ```winget install Git.Git astral-sh.uv```
 2. Open Command Prompt in the location where you want to install RH Fever Access
 3. Clone the repository by running this command: ```git clone https://github.com/Molitvan/rh-fever-access```
