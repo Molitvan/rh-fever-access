@@ -117,6 +117,12 @@ alone misidentify it as File 1. Its fifteen labels are artwork, but its live
 `N_cursor_frm_00` pane moves to the transform of `N_name_00`–`14`. Locate that
 cursor pane by name at runtime; the same name also occurs in serialized layout
 data, so require usable alpha and a coordinate matching a selectable target.
+After gameplay, two other live layouts can retain `N_cursor_frm_00` objects at
+`(-210.62, -185)` and `(207.62, -286)`. Neither is a save-label target. The
+locator once checked only broad finite-coordinate bounds despite its comment;
+after a companion restart all three matched and the label screen went silent.
+Initial discovery must call `_choice_at()` and accept only the cursor settled on
+one of the fifteen labels or the Back/Choose Mii buttons.
 The cursor and child text remain live after returning to file select, so they
 do not prove the label screen is active. Its parent `W_menu_01` does: it sits at
 Y=-34 on the label screen and is parked at Y=-500 on file select. Require that
@@ -197,10 +203,14 @@ answers "was this pane there last sweep", and `scan()` drops what it no longer
 finds so that answer means something — freeing a layout leaves the ASCII name
 in the heap, and `address()` re-checks nothing else, so without the pruning a
 pane would read as present forever and `text()` would decode freed memory. The
-file select is identified this way: its own prompt live, and the game menu's
-`T_game_title_00` *not* live. Presence alone would not do — the menu keeps the
-file panes resident, so `T_no_data_00` still reads "Select one!" with the tower
-on screen.
+file select used to be identified this way: its own prompt live, and the game
+menu's `T_game_title_00` *not* live. That failed after playing and returning
+through the title screen: the freed card name could remain cached while no
+missing pane forced a new sweep, silencing file select until the companion
+restarted. File select now requires `T_no_data_00` to have visible alpha;
+although the menu keeps that pane resident, it is hidden behind the tower.
+`MenuButtonProbe` uses the same check so the file layout's Back pane cannot
+interrupt the slot reading.
 
 **Menu items are pane-backed, which is how the buttons are read.** The selected
 item's object at `ADDR_GRID_ENTRY_PTR` holds a pane pointer at `+0x04`, and

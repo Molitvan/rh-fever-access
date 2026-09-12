@@ -235,6 +235,16 @@ INVALID_INDEX = 0xFF
 MAX_NAME_LENGTH = 32
 
 
+def _has_visible_text(pane_index, link, name: str) -> bool:
+    """True when any live duplicate of a named text pane is being drawn."""
+    for address in pane_index.addresses(name):
+        text = pane_index.text_at(address)
+        alpha = link.u8(address + panes.ALPHA_OFFSET)
+        if text and alpha is not None and alpha >= panes.VISIBLE_ALPHA:
+            return True
+    return False
+
+
 class _SaveLabelCursor:
     """Locate and decode the save-label cursor without caching a heap address.
 
@@ -309,8 +319,11 @@ class _SaveLabelCursor:
             offset = data.find(target)
             while offset != -1:
                 hit = base + offset
-                if hit % 4 == 0 and self._position(link, hit) is not None:
-                    matches.append(hit)
+                if hit % 4 == 0:
+                    position = self._position(link, hit)
+                    if (position is not None
+                            and self._choice_at(*position) is not None):
+                        matches.append(hit)
                 offset = data.find(target, offset + 1)
             overlap = len(target) - 1
             tail = block[-overlap:]
@@ -839,7 +852,9 @@ class MenuButtonProbe(Probe):
             return None
         if self._panes is None:
             self._panes = self._tracker.pane_index(link)
-        self._panes.ensure((pane,) + PANE_MODAL_BODIES)
+        self._panes.ensure((pane, PANE_FILE_PROMPT) + PANE_MODAL_BODIES)
+        if _has_visible_text(self._panes, link, PANE_FILE_PROMPT):
+            return None
         for modal_name in PANE_MODAL_BODIES:
             for address in self._panes.addresses(modal_name):
                 alpha = link.u8(address + panes.ALPHA_OFFSET)
@@ -1787,13 +1802,14 @@ class FileSelectProbe(Probe):
         # panes instead would rescan forever on empty slots, whose panes
         # legitimately do not exist.
         self._panes.ensure([PANE_FILE_PROMPT])
-        if self._panes.live(PANE_CARD_TITLE):
-            # Definitely in the game menu. Drop what we learned about the
-            # slots: the save is edited by playing, so the numbers we cached
-            # last time are not the numbers this screen will show next time.
+        # The prompt is resident behind the game menu, while a freed card pane
+        # can keep its ASCII name after leaving that menu. Visibility is the
+        # positive proof that this is the file screen; cached presence or
+        # absence cannot establish it across a return to the title screen.
+        if not _has_visible_text(self._panes, link, PANE_FILE_PROMPT):
+            # The save is edited by playing, so discard values learned during
+            # the last visit before this screen appears again.
             self._slots = {}
-            return None
-        if not self._panes.live(PANE_FILE_PROMPT):
             return None
         if slot is None or slot >= FILE_SLOT_COUNT:
             return None
@@ -1801,7 +1817,8 @@ class FileSelectProbe(Probe):
         flow = self._panes.text(PANE_FILE_FLOW.format(slot))
         medals = self._panes.text(PANE_FILE_MEDALS.format(slot))
         if flow and medals:
-            text = f"File {slot + 1}. Flow {flow}. {medals} medals."
+            unit = "medal" if medals == "1" else "medals"
+            text = f"File {slot + 1}. Flow {flow}. {medals} {unit}."
         else:
             text = f"File {slot + 1}. New game."
 

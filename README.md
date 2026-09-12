@@ -18,9 +18,13 @@ Working today:
 - **Game info card** — select a game and it reads the card: *"Tambourine. Ready to play
   a little Simian Says on the tambourine?"*
 - **Save file select** — *"File 1. Flow 89. 16 medals."* / *"File 2. New game."*
+  The visible `T_no_data_00` prompt positively identifies the screen, so stale
+  game-menu panes cannot silence it after returning through the title screen.
 - **New-save labels** — announces the fifteen artwork choices (*"Me"*, *"Friend"*,
   *"Dad"*, and so on), plus the game-provided Back and Choose Mii labels. The
   highlighted choice is derived from the live `N_cursor_frm_00` pane's transform.
+  Other menus can retain panes with that same cursor name after gameplay, so
+  discovery requires its transform to match an actual label or button target.
   The following *"Continue?"* dialog and its highlighted No/Yes button are read
   from the game as well.
 - **New-save welcome dialogue** — reads the numbered message panes beginning
