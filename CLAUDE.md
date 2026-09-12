@@ -152,6 +152,8 @@ closes, so alpha alone is not visibility: their ancestor `W_msg_00` is at
 that ancestor transform. `DeleteConfirmProbe` owns the displayed dialog, and
 `FileActionProbe` yields only while it is actually on screen. `panes.clean()`
 converts the game's literal circled digits `①` and `②` to speakable `1` and `2`.
+The ordinary grid byte reads `0`, not `0xFF`, while this overlay is open, so it
+must not be used to reject the delete confirmation.
 
 The card and the post-game screens both sit behind `0xFF` with the pointer on
 the same entry, so they are separated by *timing* — a card opens straight off

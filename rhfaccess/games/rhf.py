@@ -2032,8 +2032,6 @@ class DeleteConfirmProbe(Probe):
         return active[0]
 
     def read(self, link) -> Optional[Hashable]:
-        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
-            return None
         if self._panes is None:
             self._panes = self._tracker.pane_index(link)
         self._panes.ensure((PANE_DELETE_MESSAGE, PANE_DELETE_BACK))
