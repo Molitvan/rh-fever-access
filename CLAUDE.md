@@ -222,6 +222,13 @@ Not every pane behaves that way: the Notice dialog's panes are *cleared* when it
 is down, so there, having text really is proof. Check which kind you have before
 deciding on a gate — or just use `visible()`, which does not care.
 
+There are several Notice layouts. Perfect-attempt notices use
+`T_title_spot_00` / `T_window_00` / `T_win_msg_sub_00`; unlock notices use the
+parallel `T_win_title_01` / `T_win_msg_01` / `T_win_msg_sub_01` and `_02` sets.
+On the Rhythm Toys unlock, `_01` held the visible text while `_02` was resident,
+transparent and empty. `NoticeProbe` checks every set and requires exactly one
+visible, nonempty body before speaking.
+
 **Pane names are case sensitive and the game reuses words.** `T_message_00` is
 the tutorial bubble; `T_Message_00` is the post-medal message. Different
 screens, one letter apart.

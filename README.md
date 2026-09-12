@@ -59,6 +59,9 @@ Working today:
   `T_title_spot_00` / `T_window_00` / `T_win_msg_sub_00`, which the game clears
   when the dialog is down — so unlike the card's panes, having text is itself a
   reliable signal)
+- **Unlock notices** — *"Notice! You unlocked Rhythm Toys! Collect medals to
+  play with more toys. Press A!"* These use parallel `_01` and `_02` notice
+  layouts; the probe requires exactly one visible, nonempty body.
 - **Café barista** — the whole conversation, line by line: *"Recently, a friend let
   me mess around a bit on his guitar."* … *"See you around."* One pane replaced per
   line, gated on the dialogue box's alpha so the line it keeps afterwards is not

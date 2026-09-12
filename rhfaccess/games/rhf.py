@@ -1378,9 +1378,18 @@ PANE_NOTICE_TITLE = "T_title_spot_00"
 PANE_NOTICE_BODY = "T_window_00"
 PANE_NOTICE_PROMPT = "T_win_msg_sub_00"
 
+# Unlock notifications use parallel notice layouts. The _01 set was verified
+# on "You unlocked Rhythm Toys!"; the resident, hidden _02 set is the next
+# queued notice slot.
+NOTICE_LAYOUTS = (
+    (PANE_NOTICE_TITLE, PANE_NOTICE_BODY, PANE_NOTICE_PROMPT),
+    ("T_win_title_01", "T_win_msg_01", "T_win_msg_sub_01"),
+    ("T_win_title_02", "T_win_msg_02", "T_win_msg_sub_02"),
+)
+
 
 class NoticeProbe(Probe):
-    """Reads the Notice dialog, e.g. the offer of a Perfect attempt."""
+    """Reads Perfect-attempt and unlock Notice dialogs."""
 
     name = "notice"
     interval = 0.1
@@ -1394,22 +1403,40 @@ class NoticeProbe(Probe):
     def reset(self) -> None:
         self._panes = None
 
+    def _visible_text(self, link, name: str) -> Optional[str]:
+        active = []
+        for address in self._panes.addresses(name):
+            text = self._panes.text_at(address)
+            alpha = link.u8(address + panes.ALPHA_OFFSET)
+            if text and alpha is not None and alpha >= panes.VISIBLE_ALPHA:
+                active.append(text)
+        if len(active) != 1:
+            return None
+        return active[0]
+
     def read(self, link) -> Optional[Hashable]:
         if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
             return None
         if self._panes is None:
             self._panes = self._tracker.pane_index(link)
-        wanted = (PANE_NOTICE_TITLE, PANE_NOTICE_BODY, PANE_NOTICE_PROMPT)
+        wanted = tuple(name for layout in NOTICE_LAYOUTS for name in layout)
         self._panes.ensure(wanted)
-        body = self._panes.text(PANE_NOTICE_BODY)
-        if not body:
+
+        visible = []
+        for title_name, body_name, prompt_name in NOTICE_LAYOUTS:
+            body = self._visible_text(link, body_name)
+            if not body:
+                continue
+            title = self._visible_text(link, title_name) or ""
+            prompt = self._visible_text(link, prompt_name) or ""
+            visible.append((body_name, title, body, prompt))
+        if len(visible) != 1:
             return None
-        title = self._panes.text(PANE_NOTICE_TITLE) or ""
-        prompt = self._panes.text(PANE_NOTICE_PROMPT) or ""
-        return (title, body, prompt)
+        return visible[0]
 
     def describe(self, previous, current) -> Iterable[Utterance]:
-        text = " ".join(part for part in current if part)
+        _pane, title, body, prompt = current
+        text = " ".join(part for part in (title, body, prompt) if part)
         return [Utterance(text, interrupt=True, priority=9)]
 
 
