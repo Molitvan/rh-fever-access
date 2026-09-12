@@ -286,7 +286,9 @@ def _ancestor_visible(link, name_address: int, ancestor_name: str) -> bool:
         name = link.cstring(name_address, MAX_PANE_NAME, "ascii")
         if name == ancestor_name:
             alpha = link.u8(name_address + panes.ALPHA_OFFSET)
-            return alpha is not None and alpha >= panes.VISIBLE_ALPHA
+            flags = link.u8(name_address - 1)
+            return (alpha is not None and alpha >= panes.VISIBLE_ALPHA
+                    and flags is not None and bool(flags & 0x01))
         obj = link.pointer(obj + 0x0C)
         if obj is None:
             return False
@@ -1776,6 +1778,7 @@ class RemoteMessageProbe(Probe):
 PANE_PAUSE_MARKER = "T_pause_msg_00"
 PANE_PAUSE_CONTINUE = "T_msg_bln_00"
 PANE_PAUSE_QUIT = "T_msg_bln_01"
+PANE_PAUSE_GROUP = "N_cntrl_00"
 
 
 class PauseProbe(Probe):
@@ -1798,7 +1801,8 @@ class PauseProbe(Probe):
         for address in self._panes.addresses(name):
             text = self._panes.text_at(address)
             alpha = link.u8(address + panes.ALPHA_OFFSET)
-            if text and alpha is not None and alpha >= panes.VISIBLE_ALPHA:
+            if (text and alpha is not None and alpha >= panes.VISIBLE_ALPHA
+                    and _ancestor_visible(link, address, PANE_PAUSE_GROUP)):
                 active.append(text)
         if len(active) != 1:
             return None
