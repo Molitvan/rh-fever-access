@@ -135,6 +135,24 @@ The confirmation dialog after choosing a label uses that same cursor at
 panes (`T_msg_02`, `T_NG_btn_00`, `T_OK_btn_00`). Returning from No is a quiet
 return to the label grid and must not replay the grid's heading.
 
+An existing file opens a separate action group, `W_menu_00`, at `(0, -112)`.
+Its `N_cursor_frm_00` shares that group's `RootPane` and lands on Start
+`(0, -29)`, Back `(-117.65, -147)`, Delete `(0, -147)`, or Change
+`(117.65, -147)`. Start is artwork; the other labels have `T_back_btn_00`,
+`T_delete_btn_00`, and `T_change_btn_00`. `FileActionProbe` announces the file
+summary once and then the selected action. The ordinary selected-entry pointer
+can retain an unrelated game-menu Back object here, so `MenuButtonProbe` must
+yield whenever the file-action group is on screen.
+
+Selecting Delete overlays that action group without hiding or moving its cursor,
+so the action probe still sees Delete underneath. The warning is `T_msg_00` and
+its only button is `T_back_btn_01`. Their alpha remains 255 even after the dialog
+closes, so alpha alone is not visibility: their ancestor `W_msg_00` is at
+`(0, -112)` while displayed and parked at Y=-420 afterward. Both probes verify
+that ancestor transform. `DeleteConfirmProbe` owns the displayed dialog, and
+`FileActionProbe` yields only while it is actually on screen. `panes.clean()`
+converts the game's literal circled digits `①` and `②` to speakable `1` and `2`.
+
 The card and the post-game screens both sit behind `0xFF` with the pointer on
 the same entry, so they are separated by *timing* — a card opens straight off
 the grid, an epilogue can only follow a game. That is a heuristic and is

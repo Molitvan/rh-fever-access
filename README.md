@@ -20,6 +20,11 @@ Working today:
 - **Save file select** — *"File 1. Flow 89. 16 medals."* / *"File 2. New game."*
   The visible `T_no_data_00` prompt positively identifies the screen, so stale
   game-menu panes cannot silence it after returning through the title screen.
+- **Existing-file actions** — announces the file summary on entry, then follows
+  the cursor across Start, Back, Delete, and Change. The latter three labels are
+  read from the game; Start is artwork and is authored.
+- **Delete confirmation** — reads the irreversible-action warning, including
+  the instruction to hold 1 and 2 for three seconds, followed by Back.
 - **New-save labels** — announces the fifteen artwork choices (*"Me"*, *"Friend"*,
   *"Dad"*, and so on), plus the game-provided Back and Choose Mii labels. The
   highlighted choice is derived from the live `N_cursor_frm_00` pane's transform.

@@ -231,16 +231,59 @@ SAVE_CONFIRM_BUTTONS = {
     (95.0, -126.0): PANE_SAVE_CONFIRM_YES,
 }
 
+PANE_FILE_ACTION_GROUP = "W_menu_00"
+FILE_ACTION_GROUP_Y = -112.0
+FILE_ACTION_TARGETS = (
+    (0.0, -29.0, "start"),
+    (-117.65385, -147.0, "back"),
+    (0.0, -147.0, "delete"),
+    (117.65385, -147.0, "change"),
+)
+FILE_ACTION_TEXT_PANES = {
+    "back": "T_back_btn_00",
+    "delete": "T_delete_btn_00",
+    "change": "T_change_btn_00",
+}
+PANE_DELETE_MESSAGE = "T_msg_00"
+PANE_DELETE_BACK = "T_back_btn_01"
+PANE_DELETE_GROUP = "W_msg_00"
+DELETE_GROUP_POSITION = (0.0, -112.0)
+
 INVALID_INDEX = 0xFF
 MAX_NAME_LENGTH = 32
 
 
-def _has_visible_text(pane_index, link, name: str) -> bool:
+def _ancestor_at(link, name_address: int, ancestor_name: str,
+                 target_x: float, target_y: float) -> bool:
+    """Whether a runtime pane has an ancestor at the expected transform."""
+    obj = name_address - PANE_NAME_OFFSET
+    for _ in range(8):
+        if link.u8(obj + PANE_NAME_OFFSET - 2) != 0x04:
+            return False
+        name = link.cstring(obj + PANE_NAME_OFFSET, MAX_PANE_NAME, "ascii")
+        if name == ancestor_name:
+            x = link.f32(obj + PANE_NAME_OFFSET - 0x2C)
+            y = link.f32(obj + PANE_NAME_OFFSET - 0x1C)
+            return (
+                x is not None
+                and y is not None
+                and abs(x - target_x) <= SAVE_LABEL_POSITION_TOLERANCE
+                and abs(y - target_y) <= SAVE_LABEL_POSITION_TOLERANCE
+            )
+        obj = link.pointer(obj + 0x0C)
+        if obj is None:
+            return False
+    return False
+
+
+def _has_visible_text(pane_index, link, name: str,
+                      ancestor: Optional[tuple] = None) -> bool:
     """True when any live duplicate of a named text pane is being drawn."""
     for address in pane_index.addresses(name):
         text = pane_index.text_at(address)
         alpha = link.u8(address + panes.ALPHA_OFFSET)
-        if text and alpha is not None and alpha >= panes.VISIBLE_ALPHA:
+        if (text and alpha is not None and alpha >= panes.VISIBLE_ALPHA
+                and (ancestor is None or _ancestor_at(link, address, *ancestor))):
             return True
     return False
 
@@ -442,6 +485,147 @@ class _SaveLabelCursor:
 # This is what makes the buttons readable. The cursor index only covers the
 # tower, and reads 0xFF the moment the cursor steps off it, so there is no
 # index to look a button up by; the pointer, however, still moves.
+class _FileActionCursor:
+    """Locate the cursor in an existing save file's action menu."""
+
+    def __init__(self) -> None:
+        self._cursor_address: Optional[int] = None
+        self._group_address: Optional[int] = None
+        self._generation = -1
+        self._next_scan = 0.0
+
+    @staticmethod
+    def _action_at(x: float, y: float) -> Optional[str]:
+        for target_x, target_y, action in FILE_ACTION_TARGETS:
+            if (abs(x - target_x) <= SAVE_LABEL_POSITION_TOLERANCE
+                    and abs(y - target_y) <= SAVE_LABEL_POSITION_TOLERANCE):
+                return action
+        return None
+
+    @staticmethod
+    def _position(link, address: int) -> Optional[tuple]:
+        if link.cstring(address, MAX_PANE_NAME, "ascii") != PANE_SAVE_LABEL_CURSOR:
+            return None
+        if link.u8(address - 2) != 0x04:
+            return None
+        alpha = link.u8(address + panes.ALPHA_OFFSET)
+        x = link.f32(address - 0x2C)
+        y = link.f32(address - 0x1C)
+        if alpha is None or alpha < panes.VISIBLE_ALPHA or x is None or y is None:
+            return None
+        if not (-1000.0 <= x <= 1000.0 and -1000.0 <= y <= 1000.0):
+            return None
+        return (x, y)
+
+    @staticmethod
+    def _group_root(link, address: int) -> Optional[int]:
+        if link.cstring(address, MAX_PANE_NAME, "ascii") != PANE_FILE_ACTION_GROUP:
+            return None
+        if link.u8(address - 2) != 0x04:
+            return None
+        x = link.f32(address - 0x2C)
+        y = link.f32(address - 0x1C)
+        if (x is None or y is None
+                or abs(x) > SAVE_LABEL_POSITION_TOLERANCE
+                or abs(y - FILE_ACTION_GROUP_Y) > SAVE_LABEL_POSITION_TOLERANCE):
+            return None
+        obj = address - PANE_NAME_OFFSET
+        root = link.pointer(obj + 0x0C)
+        if (root is None
+                or link.cstring(root + PANE_NAME_OFFSET,
+                                MAX_PANE_NAME, "ascii") != "RootPane"):
+            return None
+        return root
+
+    def _cursor_valid(self, link, address: int, root: int) -> bool:
+        if self._position(link, address) is None:
+            return False
+        obj = address - PANE_NAME_OFFSET
+        return link.pointer(obj + 0x0C) == root
+
+    def _locate(self, link) -> bool:
+        generation = getattr(link, "generation", 0)
+        if generation != self._generation:
+            self._generation = generation
+            self._cursor_address = None
+            self._group_address = None
+            self._next_scan = 0.0
+
+        root = (self._group_root(link, self._group_address)
+                if self._group_address is not None else None)
+        if (root is not None and self._cursor_address is not None
+                and self._cursor_valid(link, self._cursor_address, root)):
+            return True
+        self._cursor_address = None
+        self._group_address = None
+
+        now = time.monotonic()
+        if now < self._next_scan:
+            return False
+        self._next_scan = now + 2.0
+
+        targets = {
+            "cursor": PANE_SAVE_LABEL_CURSOR.encode("ascii") + b"\x00",
+            "group": PANE_FILE_ACTION_GROUP.encode("ascii") + b"\x00",
+        }
+        hits = {name: [] for name in targets}
+        address = panes.MEM2_START
+        end = panes.MEM2_START + min(panes.MEM2_SIZE, link.mem2_extent())
+        overlap = max(len(target) for target in targets.values()) - 1
+        tail = b""
+        tail_address = address
+        complete = True
+        while address < end:
+            block = link.read(address, min(panes.CHUNK, end - address))
+            if not block:
+                complete = False
+                address += panes.CHUNK
+                tail = b""
+                continue
+            data = tail + block
+            base = tail_address if tail else address
+            for name, target in targets.items():
+                offset = data.find(target)
+                while offset != -1:
+                    hit = base + offset
+                    if hit % 4 == 0:
+                        hits[name].append(hit)
+                    offset = data.find(target, offset + 1)
+            tail = block[-overlap:]
+            tail_address = address + len(block) - overlap
+            address += panes.CHUNK
+        if not complete:
+            return False
+
+        groups = [(address, self._group_root(link, address))
+                  for address in hits["group"]]
+        groups = [(address, root) for address, root in groups if root is not None]
+        if len(groups) != 1:
+            return False
+        group_address, root = groups[0]
+        cursors = []
+        for address in hits["cursor"]:
+            position = self._position(link, address)
+            if (position is not None
+                    and self._action_at(*position) is not None
+                    and self._cursor_valid(link, address, root)):
+                cursors.append(address)
+        if len(cursors) != 1:
+            return False
+        self._group_address = group_address
+        self._cursor_address = cursors[0]
+        return True
+
+    def present(self, link) -> bool:
+        return self._locate(link)
+
+    def selection(self, link) -> Optional[str]:
+        if not self._locate(link) or self._cursor_address is None:
+            return None
+        position = self._position(link, self._cursor_address)
+        return None if position is None else self._action_at(*position)
+
+
 SELECTION_PANE_OFFSET = 0x04
 PANE_NAME_OFFSET = 0xBC
 MAX_PANE_NAME = 32
@@ -529,6 +713,8 @@ PANE_CARD_CONTROLS = "T_comment_00"
 # still read from the game.
 INTRO_FILE_SELECT = ("File menu. Use the D-pad to move between save files, "
                      "and press A to select one.")
+INTRO_FILE_ACTION = ("File options. Use the D-pad to choose an action, and "
+                     "press A to activate it.")
 INTRO_GAME_GRID = ("Game menu. Up and down move through the games in a set. "
                    "Left and right jump between sets. Press A to select a game.")
 
@@ -555,6 +741,7 @@ class ScreenTracker:
         self.last_grid_seen = 0.0
         self._panes = None
         self._save_label_cursor = _SaveLabelCursor()
+        self._file_action_cursor = _FileActionCursor()
 
     def pane_index(self, link):
         """The one pane index, shared by every probe that reads text.
@@ -587,6 +774,12 @@ class ScreenTracker:
 
     def save_confirmation_selection(self, link) -> Optional[str]:
         return self._save_label_cursor.confirmation_selection(link)
+
+    def file_action_present(self, link) -> bool:
+        return self._file_action_cursor.present(link)
+
+    def file_action_selection(self, link) -> Optional[str]:
+        return self._file_action_cursor.selection(link)
 
     def enter(self, name: str, quiet_from: Iterable[str] = ()) -> int:
         """Mark `name` active; returns that screen's own arrival count.
@@ -846,6 +1039,10 @@ class MenuButtonProbe(Probe):
         # A live index means the cursor is on the tower, which belongs to
         # GridCursorProbe.
         if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            return None
+        # The selected-entry pointer can retain an old game-menu button while
+        # the file layout uses its own cursor. Let FileActionProbe own it.
+        if self._tracker.file_action_present(link):
             return None
         pane = selected_button_pane(link)
         if pane is None:
@@ -1746,6 +1943,111 @@ class SaveConfirmProbe(Probe):
         return _with_intro(intro, label, priority=7)
 
 
+class FileActionProbe(Probe):
+    """Reads Start/Back/Delete/Change for an existing save file."""
+
+    name = "file_action"
+    interval = 0.05
+    stable_ticks = 4
+    forget_after = 8
+
+    def __init__(self, tracker: "ScreenTracker") -> None:
+        self._panes = None
+        self._tracker = tracker
+        self._intro = _IntroState()
+
+    def reset(self) -> None:
+        self._panes = None
+        self._intro = _IntroState()
+
+    def read(self, link) -> Optional[Hashable]:
+        if self._panes is None:
+            self._panes = self._tracker.pane_index(link)
+        self._panes.ensure((PANE_DELETE_MESSAGE,))
+        delete_ancestor = (PANE_DELETE_GROUP, *DELETE_GROUP_POSITION)
+        if _has_visible_text(self._panes, link, PANE_DELETE_MESSAGE,
+                             ancestor=delete_ancestor):
+            return None
+        action = self._tracker.file_action_selection(link)
+        if action is None:
+            return None
+        slot = link.u8(ADDR_FILE_SLOT)
+        if slot is None or slot >= FILE_SLOT_COUNT:
+            return None
+        pane = FILE_ACTION_TEXT_PANES.get(action)
+        if pane is None:
+            # Start is artwork; no T_start pane exists in a successful sweep.
+            label = "Start"
+        else:
+            self._panes.ensure((pane,))
+            label = self._panes.text(pane)
+            if not label:
+                return None
+
+        flow = self._panes.text(PANE_FILE_FLOW.format(slot))
+        medals = self._panes.text(PANE_FILE_MEDALS.format(slot))
+        if not flow or not medals:
+            return None
+        unit = "medal" if medals == "1" else "medals"
+        summary = f"File {slot + 1}. Flow {flow}. {medals} {unit}."
+
+        visit = self._tracker.enter("file_action")
+        self._intro.update(visit)
+        return (visit, action, summary, label)
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        _visit, _action, summary, label = current
+        intro = None
+        if self._intro.take():
+            intro = f"{INTRO_FILE_ACTION} {summary}"
+        return _with_intro(intro, label, priority=6)
+
+
+class DeleteConfirmProbe(Probe):
+    """Reads the hold-to-erase warning and its Back button."""
+
+    name = "delete_confirm"
+    interval = 0.1
+    stable_ticks = 2
+    forget_after = 8
+
+    def __init__(self, tracker: "ScreenTracker") -> None:
+        self._panes = None
+        self._tracker = tracker
+
+    def reset(self) -> None:
+        self._panes = None
+
+    def _visible_text(self, link, name: str) -> Optional[str]:
+        active = []
+        for address in self._panes.addresses(name):
+            text = self._panes.text_at(address)
+            alpha = link.u8(address + panes.ALPHA_OFFSET)
+            if (text and alpha is not None and alpha >= panes.VISIBLE_ALPHA
+                    and _ancestor_at(link, address, PANE_DELETE_GROUP,
+                                     *DELETE_GROUP_POSITION)):
+                active.append(text)
+        if len(active) != 1:
+            return None
+        return active[0]
+
+    def read(self, link) -> Optional[Hashable]:
+        if link.u8(ADDR_GRID_INDEX) != INVALID_INDEX:
+            return None
+        if self._panes is None:
+            self._panes = self._tracker.pane_index(link)
+        self._panes.ensure((PANE_DELETE_MESSAGE, PANE_DELETE_BACK))
+        body = self._visible_text(link, PANE_DELETE_MESSAGE)
+        back = self._visible_text(link, PANE_DELETE_BACK)
+        if not body or not back:
+            return None
+        return (body, back)
+
+    def describe(self, previous, current) -> Iterable[Utterance]:
+        body, back = current
+        return [Utterance(f"{body} {back}.", interrupt=True, priority=9)]
+
+
 class FileSelectProbe(Probe):
     """Speaks the highlighted save slot on the file select screen.
 
@@ -1753,11 +2055,10 @@ class FileSelectProbe(Probe):
     panes, and a slot without them is an empty "New Game" box. The empty label
     is ours — the game draws those words as artwork, not text.
 
-    Told apart from the game menu by which panes exist. Its own prompt pane
-    has to be live, and the menu's card title must not be: the file select
-    tears the menu's layout down, while the menu keeps the file panes resident
-    (`T_no_data_00` still reads "Select one!" with the tower on screen), so
-    presence alone proves nothing and absence is the half that does.
+    Told apart from the game menu by the file prompt's visible alpha. The game
+    keeps that pane resident behind the tower, and a freed card name can remain
+    cached after returning through the title screen, so presence/absence alone
+    cannot identify this screen reliably.
 
     This used to latch itself off for good the first time the grid index read
     anything but 0xFF, on the grounds that the file select only appears once
@@ -1847,7 +2148,9 @@ def build_probes() -> List[Probe]:
                            WelcomeDialogueProbe(tracker),
                            GridCursorProbe(tracker), MenuButtonProbe(tracker),
                            InfoCardProbe(tracker),
-                           FileSelectProbe(tracker), SaveLabelProbe(tracker),
+                           FileSelectProbe(tracker), FileActionProbe(tracker),
+                           DeleteConfirmProbe(tracker),
+                           SaveLabelProbe(tracker),
                            SaveConfirmProbe(tracker),
                            TutorialProbe(tracker), ResultProbe(tracker),
                            ResultRankProbe(tracker),

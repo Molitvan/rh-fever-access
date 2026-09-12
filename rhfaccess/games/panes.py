@@ -54,10 +54,15 @@ BUTTON_GLYPHS = {
 PRIVATE_USE = re.compile("[-]")
 
 
+CIRCLED_DIGITS = {"①": "1", "②": "2"}
+
+
 def clean(text: str) -> str:
     """Make pane text speakable: button glyphs named, newlines flattened."""
     for glyph, name in BUTTON_GLYPHS.items():
         text = text.replace(glyph, name)
+    for glyph, digit in CIRCLED_DIGITS.items():
+        text = text.replace(glyph, digit)
     text = PRIVATE_USE.sub("", text)
     return " ".join(text.split())
 
