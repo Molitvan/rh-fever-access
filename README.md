@@ -22,9 +22,10 @@ Note: you have to have Rhythm Heaven Fever (the US version) running inside [Dolp
 1. Download and install [Git](https://git-scm.com/install/windows) and [UV](https://docs.astral.sh/uv/getting-started/installation/#__tabbed_1_2). If you're using Windows 11, you can get these two through WinGet (easier method). Open Command Prompt and run this command: ```winget install Git.Git astral-sh.uv```
 2. Open Command Prompt in the location where you want to install RH Fever Access
 3. Clone the repository by running this command: ```git clone https://github.com/Molitvan/rh-fever-access```
-4. Install dependencies by running this command: ```uv sync```
-5. You can now run RH Fever Access with this command: ```uv run rhf-access```
-6. Now run the game inside Dolphin, and it should speak
+4. Go into the folder by running: ```cd rh-fever-access```
+5. Install dependencies by running this command: ```uv sync```
+6. You can now run RH Fever Access with this command: ```uv run rhf-access```
+7. Now run the game inside Dolphin, and it should speak
 
 ## Updates
 
@@ -32,7 +33,7 @@ To update the app, open Command Prompt in the folder where you cloned it and run
 
 ## Features
 
-Like most other Rhythm Heaven games, Rhythm Heaven Fever is only missing a screen reader for it to be fully accessible. This program adds that.
+Like most other Rhythm Heaven games, Rhythm Heaven Fever is only missing a screen reader for it to be fully accessible. This program adds that. It narrates menus and dialogue, as well as stats like flow, medals, ranks etc.
 
 ## Credits
 
