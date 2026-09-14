@@ -24,7 +24,7 @@ Note: you have to have Rhythm Heaven Fever (the US version) running inside [Dolp
 3. Clone the repository by running this command: ```git clone https://github.com/Molitvan/rh-fever-access```
 4. Go into the folder by running: ```cd rh-fever-access```
 5. Install dependencies by running this command: ```uv sync```
-6. You can now run RH Fever Access with this command: ```uv run rhf-access```
+6. You can now run RH Fever Access by running the file "run.bat"
 7. Now run the game inside Dolphin, and it should speak
 
 ## Updates
