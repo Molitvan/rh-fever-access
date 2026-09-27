@@ -295,6 +295,29 @@ def _ancestor_visible(link, name_address: int, ancestor_name: str) -> bool:
     return False
 
 
+def _pane_effectively_visible(link, name_address: int) -> Optional[bool]:
+    """Visibility inherited through a runtime pane's complete parent chain."""
+    obj = name_address - PANE_NAME_OFFSET
+    for _ in range(8):
+        current_name_address = obj + PANE_NAME_OFFSET
+        pane_type = link.u8(current_name_address - 2)
+        name = link.cstring(current_name_address, MAX_PANE_NAME, "ascii")
+        alpha = link.u8(current_name_address + panes.ALPHA_OFFSET)
+        flags = link.u8(current_name_address - 1)
+        if None in (pane_type, name, alpha, flags):
+            return None
+        if pane_type != 0x04:
+            return False
+        if alpha < panes.VISIBLE_ALPHA or not (flags & 0x01):
+            return False
+        if name == "RootPane":
+            return True
+        obj = link.pointer(obj + 0x0C)
+        if obj is None:
+            return False
+    return False
+
+
 def _has_visible_text(pane_index, link, name: str,
                       ancestor: Optional[tuple] = None) -> bool:
     """True when any live duplicate of a named text pane is being drawn."""
@@ -1419,9 +1442,9 @@ class TutorialProbe(Probe):
             return None
         if self._panes is None:
             self._panes = self._tracker.pane_index(link)
-        # A layout may keep old lines in earlier numbered panes, so text being
-        # present is not enough. Require exactly one non-empty pane whose
-        # display flag is active; ambiguity must remain silent.
+        # Practice layouts retain old lines and entire sibling layouts. Require
+        # exactly one non-empty pane that is effectively visible through its
+        # complete parent chain; ambiguity must remain silent.
         self._panes.ensure(PANE_TUTORIALS)
         active = []
         for name in PANE_TUTORIALS:
@@ -1432,10 +1455,10 @@ class TutorialProbe(Probe):
                 text = self._panes.text_at(address)
                 if not text:
                     continue
-                flag = link.u8(address + MESSAGE_DISPLAY_FLAG_OFFSET)
-                if flag is None:
+                visible = _pane_effectively_visible(link, address)
+                if visible is None:
                     return None
-                if flag & 1:
+                if visible:
                     active.append((name, text))
         if len(active) != 1:
             return None

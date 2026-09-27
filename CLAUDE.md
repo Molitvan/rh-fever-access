@@ -299,14 +299,16 @@ screens, one letter apart.
 **Tutorials can rotate through numbered panes.** Hole in One retains its first
 line in `T_message_00` and puts the next one in `T_message_01`. For these panes,
 the low bit at name `-1` distinguished the retained line (`0`) from the current
-one (`1`). `TutorialProbe` checks `T_message_00`–`03` and requires exactly one
-non-empty pane with that bit set before speaking. This flag is only verified for
-numbered message layouts; do not treat it as a general NW4R visibility signal.
+one (`1`). The display bit alone is insufficient: in Figure Fighter, a sibling
+practice layout retained *"Into you!"* with its bit set but alpha 0 while the
+visible `T_message_00` read *"OK."*. `TutorialProbe` checks `T_message_00`–`03`
+and requires exactly one non-empty pane with visible alpha and the display bit
+set on it and every ancestor through `RootPane`.
 Pane names are not necessarily unique: Screwbot Factory kept one hidden, empty
 `T_message_00` object before a second `T_message_00` containing *"Your job will
 be to screw the robots' heads on."* `PaneIndex` therefore retains every runtime
-match, and `TutorialProbe` evaluates the text and flag of each duplicate rather
-than trusting the first address found.
+match, and `TutorialProbe` evaluates the text and effective visibility of each
+duplicate rather than trusting the first address found.
 The new-save welcome sequence uses `T_message_00`/`01` too, but it runs with the
 cold grid value and null entry pointer rather than gameplay's `0xFF`. Its probe
 also requires the resident file prompt to be absent after a successful sweep.

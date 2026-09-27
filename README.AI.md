@@ -36,8 +36,9 @@ Working today:
   with *"Hello and welcome!"* before the game menu is created.
 - **Tutorial bubbles** — *"Ookii! (See what I do, then copy it!)"*, following the
   sequence across `T_message_00`–`03` as you advance it. Earlier numbered panes
-  can retain old lines, so the active pane is corroborated with its layout display
-  flag. Resident practice layouts can also contain duplicate pane names; all live
+  can retain old lines, so the active pane is corroborated using inherited alpha
+  and display flags through its full parent chain. Resident practice layouts can
+  also contain duplicate pane names; all live
   matches are retained so Screwbot Factory's hidden empty `T_message_00` cannot
   mask its active instruction. Gameplay itself has no text panes at all, so this
   is the only text the game shows once a game begins.
