@@ -21,8 +21,8 @@ CLI is authenticated as `KamiKitsune420`. Collaborator: `kalahami` (write).
 `tsatria03` was invited on 2026-07-27 and the invitation was cancelled on
 2026-07-30 at the user's request.
 
-The repo's own CLAUDE.md and README carry the technical detail — architecture,
-verified addresses, the menu layout, and the traps. Read those first; they are
-kept current deliberately and are more reliable than memory.
+The repo's root `AGENTS.md` carries the technical detail — architecture,
+verified addresses, the menu layout, and the traps. Read it first; it is kept
+current deliberately and is more reliable than memory.
 
 See [[rhf-access-working-style]].
