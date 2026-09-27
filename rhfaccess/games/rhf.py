@@ -757,6 +757,20 @@ def no_selection(link) -> bool:
 # "A: Play!  B: Go back." Preferred over writing our own.
 PANE_CARD_CONTROLS = "T_comment_00"
 
+# The pre-play card renders a saved result as artwork. HLResult and NResult
+# correspond to the game's persisted Superb and OK ranks. DotResult is the
+# card's unranked placeholder, so it participates in exclusivity validation
+# but deliberately has no spoken rank.
+INFO_CARD_RANK_PANES = {
+    "N_HLResult_00": "Superb",
+    "N_NResult_00": "OK",
+}
+PANE_INFO_CARD_UNRANKED = "N_DotResult_00"
+INFO_CARD_ARTWORK_PANES = (
+    *INFO_CARD_RANK_PANES,
+    PANE_INFO_CARD_UNRANKED,
+)
+
 # Orientation lines, spoken once on arriving at a screen and then not repeated
 # while moving around inside it. Audio games do this because a screen reader
 # user gets no free glance at the layout: without it you hear "File 2" with no
@@ -1142,7 +1156,7 @@ class MenuButtonProbe(Probe):
 
 
 class InfoCardProbe(Probe):
-    """Speaks the card shown after picking a game: its title and description.
+    """Speaks a game's title, description, controls, and saved rank.
 
     The panes keep their last string after the card closes, so this is gated on
     the menu state rather than on the text itself — otherwise it would announce
@@ -1159,9 +1173,11 @@ class InfoCardProbe(Probe):
     def __init__(self, tracker: "ScreenTracker") -> None:
         self._panes = None
         self._tracker = tracker
+        self._rank_artwork = _ResultArtwork(INFO_CARD_ARTWORK_PANES)
 
     def reset(self) -> None:
         self._panes = None
+        self._rank_artwork.reset()
 
     def read(self, link) -> Optional[Hashable]:
         # The card is up only once the grid has released the cursor. Do not be
@@ -1193,12 +1209,26 @@ class InfoCardProbe(Probe):
             return None
         # The card states its own controls, so read them rather than invent any.
         controls = self._panes.text(PANE_CARD_CONTROLS)
+        # The rank is artwork rather than text. Anchor its layout to the one
+        # visible title pane so resident copies from other screens cannot win.
+        title_addresses = [
+            address for address in self._panes.addresses(PANE_CARD_TITLE)
+            if (self._panes.text_at(address)
+                and _pane_effectively_visible(link, address))
+        ]
+        if len(title_addresses) != 1:
+            return None
+        rank = self._rank_artwork.read_exclusive(
+            link, title_addresses[0], INFO_CARD_RANK_PANES,
+            INFO_CARD_ARTWORK_PANES)
         self._tracker.enter("card")
-        return (title, description, controls)
+        return (title, description, controls, rank)
 
     def describe(self, previous, current) -> Iterable[Utterance]:
-        title, description, controls = current
+        title, description, controls, rank = current
         text = f"{title}. {description}"
+        if rank:
+            text = f"{text} Rank: {rank}."
         if controls:
             text = f"{text} {controls}"
         return [Utterance(text, interrupt=True, priority=8)]
@@ -1504,7 +1534,8 @@ NW4R_ROOT_NAME = "RootPane"
 class _ResultArtwork:
     """Locate rank artwork belonging to the currently visible result layout."""
 
-    def __init__(self) -> None:
+    def __init__(self, pane_names=RESULT_ARTWORK_PANES) -> None:
+        self._pane_names = tuple(pane_names)
         self._addresses: Dict[str, int] = {}
         self._generation = -1
 
@@ -1543,17 +1574,17 @@ class _ResultArtwork:
             self._generation = generation
             self._addresses = {}
 
-        if (len(self._addresses) == len(RESULT_ARTWORK_PANES)
+        if (len(self._addresses) == len(self._pane_names)
                 and all(self._valid(link, name, self._addresses[name], root)
-                        for name in RESULT_ARTWORK_PANES)):
+                        for name in self._pane_names)):
             return True
         self._addresses = {}
 
         targets = {
             name: name.encode("ascii") + b"\x00"
-            for name in RESULT_ARTWORK_PANES
+            for name in self._pane_names
         }
-        matches = {name: [] for name in RESULT_ARTWORK_PANES}
+        matches = {name: [] for name in self._pane_names}
         address = panes.MEM2_START
         end = panes.MEM2_START + min(panes.MEM2_SIZE, link.mem2_extent())
         overlap = max(len(target) for target in targets.values()) - 1
@@ -1587,26 +1618,39 @@ class _ResultArtwork:
         self._addresses = {name: found[0] for name, found in matches.items()}
         return True
 
-    def read(self, link, caption_address: int) -> Optional[Hashable]:
-        root = self._root(link, caption_address)
+    def read_exclusive(self, link, marker_address: int,
+                       labels: Dict[str, str],
+                       state_names=None) -> Optional[str]:
+        """Return the sole displayed labeled pane in marker's layout.
+
+        ``state_names`` may include an unlabeled state. This lets the info card
+        prove that it is explicitly unranked without inventing a spoken rank.
+        """
+        root = self._root(link, marker_address)
         if root is None or not self._locate(link, root):
             return None
 
         active = []
-        for name, label in RESULT_RANK_PANES.items():
+        for name in state_names or labels:
             flag = link.u8(self._addresses[name] + NW4R_PANE_FLAG_OFFSET)
             if flag is None:
                 return None
             if flag & 1:
-                active.append(label)
+                active.append(name)
         if len(active) != 1:
+            return None
+        return labels.get(active[0])
+
+    def read(self, link, caption_address: int) -> Optional[Hashable]:
+        rank = self.read_exclusive(link, caption_address, RESULT_RANK_PANES)
+        if rank is None:
             return None
 
         medal_flag = link.u8(
             self._addresses[PANE_RESULT_MEDAL] + NW4R_PANE_FLAG_OFFSET)
         if medal_flag is None:
             return None
-        return (active[0], bool(medal_flag & 1))
+        return (rank, bool(medal_flag & 1))
 
 # Earning a Perfect puts its own message on screen, and on that screen the
 # epilogue panes are empty — so the two arrive separately and either may be

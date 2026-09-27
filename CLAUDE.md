@@ -179,6 +179,13 @@ NW4R parent chains, and accepts only objects sharing the visible
 It requires exactly one active rank and queues the rank after `ResultProbe`'s
 feedback rather than interrupting it.
 
+The pre-play info card uses a different mutually exclusive artwork set:
+`N_HLResult_00` (Superb), `N_NResult_00` (OK), and `N_DotResult_00` (the
+unranked placeholder). `InfoCardProbe` locates these at runtime in the same
+`RootPane` as the one effectively visible `T_game_title_00`. It includes a
+saved rank in the card's initial utterance and says nothing rank-like for the
+placeholder.
+
 The feedback layout is freed before the following Perfect/post-medal message
 layout is created. A shared `PaneIndex` sweep can land in that empty handoff and
 then wait its normal five-second rescan interval, delaying or missing the short

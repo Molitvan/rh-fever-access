@@ -15,8 +15,10 @@ Working today:
 - **Game-select cursor** — move between entries and it announces "Screwbot Factory",
   "See-Saw", "Double Date" and so on, read from the game's own text archive rather than
   from a hardcoded list.
-- **Game info card** — select a game and it reads the card: *"Tambourine. Ready to play
-  a little Simian Says on the tambourine?"*
+- **Game info card** — select a game and it reads the title, description,
+  saved rank, and controls: *"Remix 3. Let's mix things up! Rank: Superb. A:
+  Play! B: Go back."* The rank is read from the card's live artwork; an
+  unplayed game has an explicit unlabeled state and does not invent a rank.
 - **Save file select** — *"File 1. Flow 89. 16 medals."* / *"File 2. New game."*
   The visible `T_no_data_00` prompt positively identifies the screen, so stale
   game-menu panes cannot silence it after returning through the title screen.
@@ -97,6 +99,11 @@ containers `N_HI_00`, `N_OK_00`, and `N_NG_00`; exactly one has its display flag
 set. The medal has its own `N_Medal_00` container. `ResultRankProbe` locates those
 objects by name at runtime and requires them to share the visible caption's
 `RootPane`, avoiding both serialized copies and stale result layouts.
+
+The pre-play card has a separate artwork set: `N_HLResult_00` is Superb,
+`N_NResult_00` is OK, and `N_DotResult_00` is its unranked placeholder. The
+card probe validates that these objects share the visible title pane's
+`RootPane` and includes a real saved rank in the card's initial announcement.
 
 ### Reading on-screen text in general
 
